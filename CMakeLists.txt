@@ -12,7 +12,7 @@ OPTION(CGI_SUPPORT "CGI support" ON)
 OPTION(LUA_SUPPORT "Lua support" ON)
 OPTION(UBUS_SUPPORT "ubus support" ON)
 
-ADD_DEFINITIONS(-Os -Wall -Werror --std=gnu99 -Wmissing-declarations)
+ADD_DEFINITIONS(-Os -Wall --std=gnu99 -Wmissing-declarations)
 
 IF(DEBUG)
 	ADD_DEFINITIONS(-DDEBUG -g3)

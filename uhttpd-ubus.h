@@ -23,7 +23,7 @@
 #include <libubus.h>
 #include <libubox/avl.h>
 #include <libubox/blobmsg_json.h>
-#include <json/json.h>
+#include <json-c/json.h>
 
 
 #define UH_UBUS_MAX_POST_SIZE	4096

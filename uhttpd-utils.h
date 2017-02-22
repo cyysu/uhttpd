@@ -23,7 +23,7 @@
 #include <pwd.h>
 #include <sys/stat.h>
 
-#include <libubox/uloop.h>
+#include "libubox/uloop.h"
 
 #ifdef __APPLE__
 static inline void clearenv(void)
