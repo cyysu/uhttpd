@@ -1,4 +1,10 @@
 /*
+ * epoll是在高效的***IO复用技术***
+ * 所谓的IO复用，多路连接复用一个IO线程
+ * 常见的IO复用技术有select, poll,
+ * epoll以及kqueue等等。其中epoll为Linux独占，而kqueue则在许多UNIX系统上存在，包括OS
+ * X
+ *
  * uloop - event loop implementation
  *
  * Copyright (C) 2010-2016 Felix Fietkau <nbd@openwrt.org>
@@ -23,85 +29,95 @@
 #define EPOLLRDHUP 0x2000
 #endif
 
-static int uloop_init_pollfd(void)
-{
-	if (poll_fd >= 0)
-		return 0;
+/*
+  初始化epoll多路复用
+  主要工作是poll_fd =
+  epoll_create(32);创建一个epoll的文件描述符监控句柄。最多监控32个文件描述符
+*/
+static int uloop_init_pollfd(void) {
+  if (poll_fd >= 0)
+    return 0;
 
-	poll_fd = epoll_create(32);
-	if (poll_fd < 0)
-		return -1;
+  poll_fd = epoll_create(32);
+  if (poll_fd < 0)
+    return -1;
 
-	fcntl(poll_fd, F_SETFD, fcntl(poll_fd, F_GETFD) | FD_CLOEXEC);
-	return 0;
+  /*
+    fcntl()用来操作文件描述词的一些特性
+    F_SETFD 设置close-on-exec 旗标. 该旗标以参数arg 的FD_CLOEXEC 位决定.
+    F_GETFD
+    取得与文件描述符fd联合close-on-exec标志,类似FD_CLOEXEC.如果返回值和FD_CLOEXEC进行与运算结果是0的话,文件保持交叉式访问exec(),否则如果通过exec运行的话,文件将被关闭(arg被忽略)
+
+    close-on-exec:这个句柄我在fork子进程后执行exec时就关闭
+  */
+  fcntl(poll_fd, F_SETFD, fcntl(poll_fd, F_GETFD) | FD_CLOEXEC);
+  return 0;
 }
 
-static int register_poll(struct uloop_fd *fd, unsigned int flags)
-{
-	struct epoll_event ev;
-	int op = fd->registered ? EPOLL_CTL_MOD : EPOLL_CTL_ADD;
+static int register_poll(struct uloop_fd *fd, unsigned int flags) {
+  struct epoll_event ev;
+  int op = fd->registered ? EPOLL_CTL_MOD : EPOLL_CTL_ADD;
 
-	memset(&ev, 0, sizeof(struct epoll_event));
+  memset(&ev, 0, sizeof(struct epoll_event));
 
-	if (flags & ULOOP_READ)
-		ev.events |= EPOLLIN | EPOLLRDHUP;
+  if (flags & ULOOP_READ)
+    ev.events |= EPOLLIN | EPOLLRDHUP;
 
-	if (flags & ULOOP_WRITE)
-		ev.events |= EPOLLOUT;
+  if (flags & ULOOP_WRITE)
+    ev.events |= EPOLLOUT;
 
-	if (flags & ULOOP_EDGE_TRIGGER)
-		ev.events |= EPOLLET;
+  if (flags & ULOOP_EDGE_TRIGGER)
+    ev.events |= EPOLLET;
 
-	ev.data.ptr = fd;
-	fd->flags = flags;
+  ev.data.ptr = fd;
+  fd->flags = flags;
 
-	return epoll_ctl(poll_fd, op, fd->fd, &ev);
+  return epoll_ctl(poll_fd, op, fd->fd, &ev);
 }
 
 static struct epoll_event events[ULOOP_MAX_EVENTS];
 
-static int __uloop_fd_delete(struct uloop_fd *sock)
-{
-	sock->flags = 0;
-	return epoll_ctl(poll_fd, EPOLL_CTL_DEL, sock->fd, 0);
+static int __uloop_fd_delete(struct uloop_fd *sock) {
+  sock->flags = 0;
+  return epoll_ctl(poll_fd, EPOLL_CTL_DEL, sock->fd, 0);
 }
 
-static int uloop_fetch_events(int timeout)
-{
-	int n, nfds;
+static int uloop_fetch_events(int timeout) {
+  int n, nfds;
 
-	nfds = epoll_wait(poll_fd, events, ARRAY_SIZE(events), timeout);
-	for (n = 0; n < nfds; ++n) {
-		struct uloop_fd_event *cur = &cur_fds[n];
-		struct uloop_fd *u = events[n].data.ptr;
-		unsigned int ev = 0;
+  nfds = epoll_wait(poll_fd, events, ARRAY_SIZE(events), timeout);
+  for (n = 0; n < nfds; ++n) {
+    struct uloop_fd_event *cur = &cur_fds[n];
+    struct uloop_fd *u = events[n].data.ptr;
+    unsigned int ev = 0;
 
-		cur->fd = u;
-		if (!u)
-			continue;
+    cur->fd = u;
+    if (!u)
+      continue;
 
-		if (events[n].events & (EPOLLERR|EPOLLHUP)) {
-			u->error = true;
-			if (!(u->flags & ULOOP_ERROR_CB))
-				uloop_fd_delete(u);
-		}
+    if (events[n].events & (EPOLLERR | EPOLLHUP)) {
+      u->error = true;
+      if (!(u->flags & ULOOP_ERROR_CB))
+        uloop_fd_delete(u);
+    }
 
-		if(!(events[n].events & (EPOLLRDHUP|EPOLLIN|EPOLLOUT|EPOLLERR|EPOLLHUP))) {
-			cur->fd = NULL;
-			continue;
-		}
+    if (!(events[n].events &
+          (EPOLLRDHUP | EPOLLIN | EPOLLOUT | EPOLLERR | EPOLLHUP))) {
+      cur->fd = NULL;
+      continue;
+    }
 
-		if(events[n].events & EPOLLRDHUP)
-			u->eof = true;
+    if (events[n].events & EPOLLRDHUP)
+      u->eof = true;
 
-		if(events[n].events & EPOLLIN)
-			ev |= ULOOP_READ;
+    if (events[n].events & EPOLLIN)
+      ev |= ULOOP_READ;
 
-		if(events[n].events & EPOLLOUT)
-			ev |= ULOOP_WRITE;
+    if (events[n].events & EPOLLOUT)
+      ev |= ULOOP_WRITE;
 
-		cur->events = ev;
-	}
+    cur->events = ev;
+  }
 
-	return nfds;
+  return nfds;
 }

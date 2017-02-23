@@ -661,7 +661,7 @@ static void uh_client_cb(struct client *cl, unsigned int events) {
       return;
     }
 
-    /* dispatch request */
+    /* 分发请求 */
     if (!uh_dispatch_request(cl, req)) {
       D("SRV: Client(%d) failed to dispach request\n", cl->fd.fd);
       uh_client_shutdown(cl);
@@ -1372,7 +1372,7 @@ sigaction *oldact);
     }
   }
 
-  /* uHTTPd启动 */
+  /* 事件循环主处理入口 */
   uloop_run();
 
 #ifdef HAVE_LUA
