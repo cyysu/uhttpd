@@ -82,6 +82,9 @@ static int __uloop_fd_delete(struct uloop_fd *sock) {
   return epoll_ctl(poll_fd, EPOLL_CTL_DEL, sock->fd, 0);
 }
 
+/**
+ * 处理epoll监听到的事件
+ */
 static int uloop_fetch_events(int timeout) {
   int n, nfds;
 
@@ -95,12 +98,20 @@ static int uloop_fetch_events(int timeout) {
     if (!u)
       continue;
 
+    /**
+     * EPOLLERR：表示对应的文件描述符发生错误；
+     * EPOLLHUP：表示对应的文件描述符被挂断；
+     * epoll发生错误
+     */
     if (events[n].events & (EPOLLERR | EPOLLHUP)) {
       u->error = true;
       if (!(u->flags & ULOOP_ERROR_CB))
         uloop_fd_delete(u);
     }
 
+    /**
+     * 监听描述符事件有误
+     */
     if (!(events[n].events &
           (EPOLLRDHUP | EPOLLIN | EPOLLOUT | EPOLLERR | EPOLLHUP))) {
       cur->fd = NULL;
@@ -110,9 +121,11 @@ static int uloop_fetch_events(int timeout) {
     if (events[n].events & EPOLLRDHUP)
       u->eof = true;
 
+    // EPOLLIN ：表示对应的文件描述符可以读
     if (events[n].events & EPOLLIN)
       ev |= ULOOP_READ;
 
+    // EPOLLOUT：表示对应的文件描述符可以写
     if (events[n].events & EPOLLOUT)
       ev |= ULOOP_WRITE;
 

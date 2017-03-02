@@ -41,6 +41,10 @@ const char *http_versions[] = {
 
 static int run = 1;
 
+/**
+ * 静态函数会被自动分配在一个一直使用的存储区，
+ * 直到退出应用程序实例，避免了调用函数时压栈出栈，速度快很多。
+ */
 static void uh_sigterm(int sig) { run = 0; }
 
 static void uh_config_parse(struct config *conf) {
