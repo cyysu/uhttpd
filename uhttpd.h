@@ -57,10 +57,18 @@
 #define SOL_TCP 6
 #endif
 
+/**
+ * 将错误信息写入到标准错误中
+ * 它允许你可以定义可变参数宏(variadic
+ * macros)，这样你就可以使用拥有可以变化的参数表的宏。
+ * #define debug(...) printf(__VA_ARGS__)
+ * debug("Y = %d\n", y);
+ * printf("Y = %d\n", y);
+ */
 #ifdef DEBUG
 #define D(...) fprintf(stderr, __VA_ARGS__)
 #else
-#define D(...)
+#define D(...) fprintf(stderr, __VA_ARGS__)
 #endif
 
 #define UH_LIMIT_MSGHEAD 4096

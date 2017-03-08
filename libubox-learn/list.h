@@ -36,6 +36,7 @@
 
 #define prefetch(x)
 
+// container_of宏用来根据成员的地址来获取结构体的地址
 #ifndef container_of
 #define container_of(ptr, type, member)                                        \
   ({                                                                           \

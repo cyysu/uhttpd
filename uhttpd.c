@@ -20,6 +20,22 @@
 #include "uhttpd-file.h"
 #include "uhttpd-utils.h"
 
+/**
+ * uhttpd服务器接受的请求会根据请求头分成三类，静态文件请求，
+ * cgi请求（处理表单信息）和lua请求（功能强大实现多功能的处理和调用）
+ *
+ * HAVE_CGI HAVE_LUA HAVE_UBUS是在CMake中定义的（CMakeLists.txt）
+ * OPTION(CGI_SUPPORT "CGI support" ON)
+ * 此时表示，如果用户没有定义过address,那我address的默认值就是ON
+ *
+ * 如何设置CMake中的option变量值？
+ *
+ * CMakeLists.txt：
+ * option(MyOption "MyOption" OFF)
+ *
+ * Command line：
+ * cmake -DMyOption=ON MyProjectFolder
+ */
 #ifdef HAVE_CGI
 #include "uhttpd-cgi.h"
 #endif
@@ -850,6 +866,7 @@ static int uh_initubus(struct config *conf) {
 #endif
 
 int main(int argc, char **argv) {
+
   /* 服务地址结构体 */
   struct addrinfo hints;
 

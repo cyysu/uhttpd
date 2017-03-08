@@ -28,8 +28,8 @@ $ make install
 ```
 + 最后编译安装uhttpd。（注意：CMakeLIsts.txt中的编译新增了-Werror选项，所有警告会当成错误进行处理）
 ```
-$ cd uhttpd
-$ cmake.
+$ cd uhttpd/build
+$ cmake ..
 $ make
 $ make install
 ```
