@@ -39,14 +39,12 @@
 #endif
 #include <sys/wait.h>
 
-struct uloop_fd_event
-{
+struct uloop_fd_event {
   struct uloop_fd *fd;
   unsigned int events;
 };
 
-struct uloop_fd_stack
-{
+struct uloop_fd_stack {
   struct uloop_fd_stack *next;
   struct uloop_fd *fd;
   unsigned int events;
@@ -79,8 +77,7 @@ int uloop_fd_add(struct uloop_fd *sock, unsigned int flags);
 #include "uloop-epoll.c"
 #endif
 
-static void waker_consume(struct uloop_fd *fd, unsigned int events)
-{
+static void waker_consume(struct uloop_fd *fd, unsigned int events) {
   char buf[4];
 
   while (read(fd->fd, buf, 4) > 0)
@@ -92,16 +89,20 @@ static struct uloop_fd waker_fd = {
     .fd = -1, .cb = waker_consume,
 };
 
-static void waker_init_fd(int fd)
-{
-  // FD_CLOEXEC表示当程序执行exec函数时本fd将被系统自动关闭,表示不传递给exec创建的新进程
+static void waker_init_fd(int fd) {
+  /**
+   * exec用被执行的程序完全替换调用它的程序的影像
+   * fork创建一个新的进程就产生了一个新的PID，exec启动一个新程序，替换原有的进程
+   * 因此这个新的被exec执行的进程的PID不会改变，和调用exec函数的进程一样
+   *
+   * FD_CLOEXEC表示当程序执行exec函数时本fd将被系统自动关闭,表示不传递给exec创建的新进程
+   */
   fcntl(fd, F_SETFD, fcntl(fd, F_GETFD) | FD_CLOEXEC);
   // 设置为非阻塞方式
   fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
 }
 
-static int waker_init(void)
-{
+static int waker_init(void) {
   int fds[2];
 
   if (waker_pipe >= 0)
@@ -124,13 +125,11 @@ static int waker_init(void)
 /*
    初始化事件循环
 */
-int uloop_init(void)
-{
+int uloop_init(void) {
   if (uloop_init_pollfd() < 0)
     return -1;
 
-  if (waker_init() < 0)
-  {
+  if (waker_init() < 0) {
     uloop_done();
     return -1;
   }
@@ -138,26 +137,37 @@ int uloop_init(void)
   return 0;
 }
 
-static bool uloop_fd_stack_event(struct uloop_fd *fd, int events)
-{
+/**
+ * For every entry in cur_fds array,
+ * uloop will check whether the event is level trigger or edge trigger.
+ * If the event is edge triggering, uloop will check every entry inside fd_stack
+ * list.
+ * If there is already an exsiting entry with the same file descriptor fd,
+ * and the event will be buffered and kept in fd_stack list with
+ * ULOOP_EVENT_BUFFERED set. In this case, uloop_fd_stack_event() returns true.
+ */
+static bool uloop_fd_stack_event(struct uloop_fd *fd, int events) {
   struct uloop_fd_stack *cur;
 
   /*
    * Do not buffer events for level-triggered fds, they will keep firing.
    * Caller needs to take care of recursion issues.
+   *
+   * flags中是否设置了ET模式
    */
   if (!(fd->flags & ULOOP_EDGE_TRIGGER))
     return false;
 
-  for (cur = fd_stack; cur; cur = cur->next)
-  {
+  for (cur = fd_stack; cur; cur = cur->next) {
     if (cur->fd != fd)
       continue;
 
-    if (events < 0)
+    if (events < 0) {
       cur->fd = NULL;
-    else
+    } else {
+      //加上ULOOP_EVENT_BUFFERED事件
       cur->events |= events | ULOOP_EVENT_BUFFERED;
+    }
 
     return true;
   }
@@ -165,22 +175,20 @@ static bool uloop_fd_stack_event(struct uloop_fd *fd, int events)
   return false;
 }
 
-static void uloop_run_events(int timeout)
-{
+static void uloop_run_events(int timeout) {
   struct uloop_fd_event *cur;
   struct uloop_fd *fd;
 
-  if (!cur_nfds)
-  {
+  if (!cur_nfds) {
     cur_fd = 0;
-    //轮询监听到请求
+    //获取监听到的文件描述符
     cur_nfds = uloop_fetch_events(timeout);
     if (cur_nfds < 0)
       cur_nfds = 0;
   }
 
-  while (cur_nfds > 0)
-  {
+  //触发uloop_fetch_events过滤后的文件描述符的处理函数
+  while (cur_nfds > 0) {
     struct uloop_fd_stack stack_cur;
     unsigned int events;
 
@@ -192,7 +200,7 @@ static void uloop_run_events(int timeout)
     if (!fd)
       continue;
 
-    //描述符事件处理函数
+    //是否绑定了描述符事件处理函数
     if (!fd->cb)
       continue;
 
@@ -202,8 +210,7 @@ static void uloop_run_events(int timeout)
     stack_cur.next = fd_stack;
     stack_cur.fd = fd;
     fd_stack = &stack_cur;
-    do
-    {
+    do {
       stack_cur.events = 0;
       fd->cb(fd, events);
       events = stack_cur.events & ULOOP_EVENT_MASK;
@@ -215,23 +222,22 @@ static void uloop_run_events(int timeout)
 }
 
 /*
-  注册一个新描述符到事件处理循环
+  注册一个新描述符到IO模型中
 */
-int uloop_fd_add(struct uloop_fd *sock, unsigned int flags)
-{
+int uloop_fd_add(struct uloop_fd *sock, unsigned int flags) {
   unsigned int fl;
   int ret;
 
   if (!(flags & (ULOOP_READ | ULOOP_WRITE)))
     return uloop_fd_delete(sock);
 
-  if (!sock->registered && !(flags & ULOOP_BLOCKING))
-  {
+  if (!sock->registered && !(flags & ULOOP_BLOCKING)) {
     fl = fcntl(sock->fd, F_GETFL, 0);
     fl |= O_NONBLOCK;
     fcntl(sock->fd, F_SETFL, fl);
   }
 
+  //注册IO模型配置
   ret = register_poll(sock, flags);
   if (ret < 0)
     goto out;
@@ -247,12 +253,10 @@ out:
 /*
   从事件处理循环中销毁指定描述符
 */
-int uloop_fd_delete(struct uloop_fd *fd)
-{
+int uloop_fd_delete(struct uloop_fd *fd) {
   int i;
 
-  for (i = 0; i < cur_nfds; i++)
-  {
+  for (i = 0; i < cur_nfds; i++) {
     if (cur_fds[cur_fd + i].fd != fd)
       continue;
 
@@ -267,23 +271,19 @@ int uloop_fd_delete(struct uloop_fd *fd)
   return __uloop_fd_delete(fd);
 }
 
-static int tv_diff(struct timeval *t1, struct timeval *t2)
-{
+static int tv_diff(struct timeval *t1, struct timeval *t2) {
   return (t1->tv_sec - t2->tv_sec) * 1000 + (t1->tv_usec - t2->tv_usec) / 1000;
 }
 
-int uloop_timeout_add(struct uloop_timeout *timeout)
-{
+int uloop_timeout_add(struct uloop_timeout *timeout) {
   struct uloop_timeout *tmp;
   struct list_head *h = &timeouts;
 
   if (timeout->pending)
     return -1;
 
-  list_for_each_entry(tmp, &timeouts, list)
-  {
-    if (tv_diff(&tmp->time, &timeout->time) > 0)
-    {
+  list_for_each_entry(tmp, &timeouts, list) {
+    if (tv_diff(&tmp->time, &timeout->time) > 0) {
       h = &tmp->list;
       break;
     }
@@ -298,8 +298,7 @@ int uloop_timeout_add(struct uloop_timeout *timeout)
 /*
   获取当前时间
 */
-static void uloop_gettime(struct timeval *tv)
-{
+static void uloop_gettime(struct timeval *tv) {
   struct timespec ts;
 
   /*
@@ -312,8 +311,7 @@ static void uloop_gettime(struct timeval *tv)
   tv->tv_usec = ts.tv_nsec / 1000;
 }
 
-int uloop_timeout_set(struct uloop_timeout *timeout, int msecs)
-{
+int uloop_timeout_set(struct uloop_timeout *timeout, int msecs) {
   struct timeval *time = &timeout->time;
 
   if (timeout->pending)
@@ -324,8 +322,7 @@ int uloop_timeout_set(struct uloop_timeout *timeout, int msecs)
   time->tv_sec += msecs / 1000;
   time->tv_usec += (msecs % 1000) * 1000;
 
-  if (time->tv_usec > 1000000)
-  {
+  if (time->tv_usec > 1000000) {
     time->tv_sec++;
     time->tv_usec -= 1000000;
   }
@@ -333,8 +330,7 @@ int uloop_timeout_set(struct uloop_timeout *timeout, int msecs)
   return uloop_timeout_add(timeout);
 }
 
-int uloop_timeout_cancel(struct uloop_timeout *timeout)
-{
+int uloop_timeout_cancel(struct uloop_timeout *timeout) {
   if (!timeout->pending)
     return -1;
 
@@ -344,8 +340,7 @@ int uloop_timeout_cancel(struct uloop_timeout *timeout)
   return 0;
 }
 
-int uloop_timeout_remaining(struct uloop_timeout *timeout)
-{
+int uloop_timeout_remaining(struct uloop_timeout *timeout) {
   struct timeval now;
 
   if (!timeout->pending)
@@ -356,18 +351,15 @@ int uloop_timeout_remaining(struct uloop_timeout *timeout)
   return tv_diff(&timeout->time, &now);
 }
 
-int uloop_process_add(struct uloop_process *p)
-{
+int uloop_process_add(struct uloop_process *p) {
   struct uloop_process *tmp;
   struct list_head *h = &processes;
 
   if (p->pending)
     return -1;
 
-  list_for_each_entry(tmp, &processes, list)
-  {
-    if (tmp->pid > p->pid)
-    {
+  list_for_each_entry(tmp, &processes, list) {
+    if (tmp->pid > p->pid) {
       h = &tmp->list;
       break;
     }
@@ -379,8 +371,7 @@ int uloop_process_add(struct uloop_process *p)
   return 0;
 }
 
-int uloop_process_delete(struct uloop_process *p)
-{
+int uloop_process_delete(struct uloop_process *p) {
   if (!p->pending)
     return -1;
 
@@ -390,16 +381,14 @@ int uloop_process_delete(struct uloop_process *p)
   return 0;
 }
 
-static void uloop_handle_processes(void)
-{
+static void uloop_handle_processes(void) {
   struct uloop_process *p, *tmp;
   pid_t pid;
   int ret;
 
   do_sigchld = false;
 
-  while (1)
-  {
+  while (1) {
     pid = waitpid(-1, &ret, WNOHANG);
     if (pid < 0 && errno == EINTR)
       continue;
@@ -407,8 +396,7 @@ static void uloop_handle_processes(void)
     if (pid <= 0)
       return;
 
-    list_for_each_entry_safe(p, tmp, &processes, list)
-    {
+    list_for_each_entry_safe(p, tmp, &processes, list) {
       if (p->pid < pid)
         continue;
 
@@ -421,12 +409,9 @@ static void uloop_handle_processes(void)
   }
 }
 
-static void uloop_signal_wake(void)
-{
-  do
-  {
-    if (write(waker_pipe, "w", 1) < 0)
-    {
+static void uloop_signal_wake(void) {
+  do {
+    if (write(waker_pipe, "w", 1) < 0) {
       if (errno == EINTR)
         continue;
     }
@@ -434,15 +419,13 @@ static void uloop_signal_wake(void)
   } while (1);
 }
 
-static void uloop_handle_sigint(int signo)
-{
+static void uloop_handle_sigint(int signo) {
   uloop_status = signo;
   uloop_cancelled = true;
   uloop_signal_wake();
 }
 
-static void uloop_sigchld(int signo)
-{
+static void uloop_sigchld(int signo) {
   do_sigchld = true;
   uloop_signal_wake();
 }
@@ -451,8 +434,7 @@ static void uloop_sigchld(int signo)
   事件循环处理函数安装
 */
 static void uloop_install_handler(int signum, void (*handler)(int),
-                                  struct sigaction *old, bool add)
-{
+                                  struct sigaction *old, bool add) {
   struct sigaction s;
   struct sigaction *act;
 
@@ -463,12 +445,10 @@ static void uloop_install_handler(int signum, void (*handler)(int),
   sigaction(signum, NULL, &s);
 
   /* 如果是新增处理函数的操作 */
-  if (add)
-  {
+  if (add) {
     /* 如果参数signum所指的信号的处理方法为默认值 */
     /* 不重写已存在的自定义处理 */
-    if (s.sa_handler == SIG_DFL)
-    {
+    if (s.sa_handler == SIG_DFL) {
       /*
         void * memcpy ( void * dest, const void * src, size_t num );
         memcpy() 会复制 src 所指的内存内容的前 num 个字节到
@@ -479,10 +459,8 @@ static void uloop_install_handler(int signum, void (*handler)(int),
       s.sa_flags = 0;
       act = &s;
     }
-  }
-  else if (s.sa_handler ==
-           handler)
-  { /* Do not restore if someone modified our handler */
+  } else if (s.sa_handler ==
+             handler) { /* Do not restore if someone modified our handler */
     act = old;
   }
 
@@ -490,27 +468,22 @@ static void uloop_install_handler(int signum, void (*handler)(int),
     sigaction(signum, act, NULL);
 }
 
-static void uloop_ignore_signal(int signum, bool ignore)
-{
+static void uloop_ignore_signal(int signum, bool ignore) {
   struct sigaction s;
   void *new_handler = NULL;
 
   sigaction(signum, NULL, &s);
 
-  if (ignore)
-  {
+  if (ignore) {
     if (s.sa_handler == SIG_DFL) /* 如果没有自定义函数设置，则可忽略 */
       new_handler = SIG_IGN;
-  }
-  else
-  {
+  } else {
     if (s.sa_handler ==
         SIG_IGN) /* Restore only if noone modified our SIG_IGN */
       new_handler = SIG_DFL;
   }
 
-  if (new_handler)
-  {
+  if (new_handler) {
     s.sa_handler = new_handler;
     s.sa_flags = 0;
     sigaction(signum, &s, NULL);
@@ -520,8 +493,7 @@ static void uloop_ignore_signal(int signum, bool ignore)
 /*
   信号设置
 */
-static void uloop_setup_signals(bool add)
-{
+static void uloop_setup_signals(bool add) {
   static struct sigaction old_sigint, old_sigchld, old_sigterm;
 
   /* SIGINT (中断) 当用户按下时,通知前台进程组终止进程 */
@@ -535,8 +507,7 @@ static void uloop_setup_signals(bool add)
   uloop_ignore_signal(SIGPIPE, add);
 }
 
-static int uloop_get_next_timeout(struct timeval *tv)
-{
+static int uloop_get_next_timeout(struct timeval *tv) {
   struct uloop_timeout *timeout;
   int diff;
 
@@ -551,12 +522,10 @@ static int uloop_get_next_timeout(struct timeval *tv)
   return diff;
 }
 
-static void uloop_process_timeouts(struct timeval *tv)
-{
+static void uloop_process_timeouts(struct timeval *tv) {
   struct uloop_timeout *t;
 
-  while (!list_empty(&timeouts))
-  {
+  while (!list_empty(&timeouts)) {
     t = list_first_entry(&timeouts, struct uloop_timeout, list);
 
     if (tv_diff(&t->time, tv) > 0)
@@ -568,15 +537,13 @@ static void uloop_process_timeouts(struct timeval *tv)
   }
 }
 
-static void uloop_clear_timeouts(void)
-{
+static void uloop_clear_timeouts(void) {
   struct uloop_timeout *t, *tmp;
 
   list_for_each_entry_safe(t, tmp, &timeouts, list) uloop_timeout_cancel(t);
 }
 
-static void uloop_clear_processes(void)
-{
+static void uloop_clear_processes(void) {
   struct uloop_process *p, *tmp;
 
   list_for_each_entry_safe(p, tmp, &processes, list) uloop_process_delete(p);
@@ -591,8 +558,7 @@ bool uloop_cancelling(void) { return uloop_run_depth > 0 && uloop_cancelled; }
   3.循环检测是否收到一个sigchld信号，如果收到，删除对应的子进程，有一条process子进程链表在维护
   4.循环调用epoll_wait监听相应的触发事件文件描述符fd
 */
-int uloop_run(void)
-{
+int uloop_run(void) {
   struct timeval tv;
 
   /*
@@ -607,8 +573,7 @@ int uloop_run(void)
   uloop_cancelled = false;
 
   /* 进入事件循环 */
-  while (!uloop_cancelled)
-  {
+  while (!uloop_cancelled) {
     //获取当前时间
     uloop_gettime(&tv);
     //把超时的timeout清理掉
@@ -640,16 +605,13 @@ int uloop_run(void)
 /**
 * 销毁事件循环
 */
-void uloop_done(void)
-{
-  if (poll_fd >= 0)
-  {
+void uloop_done(void) {
+  if (poll_fd >= 0) {
     close(poll_fd);
     poll_fd = -1;
   }
 
-  if (waker_pipe >= 0)
-  {
+  if (waker_pipe >= 0) {
     uloop_fd_delete(&waker_fd);
     close(waker_pipe);
     close(waker_fd.fd);

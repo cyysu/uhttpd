@@ -260,14 +260,9 @@ static bool uh_cgi_socket_cb(struct client *cl) {
 out:
   if (!state->header_sent) {
     if (cl->timeout.pending) {
-      FILE *pFile;
-      pFile = fopen("myfile.txt", "w");
-      fprintf(pFile, "CGI: Child(%d) presumed dead [%s]\n", cl->proc.pid,
-              strerror(errno));
-      fclose(pFile);
-
+      D("CGI: Child(%d) presumed dead [%s]\n", 123123, "abc");
       uh_http_sendhf(cl, 502, "Bad Gateway",
-                     "The CGI process123123 did not produce any response\n");
+                     "The CGI process did not produce any response\n");
     } else {
       uh_http_sendhf(cl, 504, "Gateway Timeout",
                      "The CGI process took too long to produce a "

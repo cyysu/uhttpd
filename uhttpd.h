@@ -68,7 +68,7 @@
 #ifdef DEBUG
 #define D(...) fprintf(stderr, __VA_ARGS__)
 #else
-#define D(...) fprintf(stderr, __VA_ARGS__)
+#define D(...)
 #endif
 
 #define UH_LIMIT_MSGHEAD 4096

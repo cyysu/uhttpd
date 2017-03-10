@@ -119,7 +119,12 @@ static int __uh_raw_send(struct client *cl, const char *buf, int len, int sec,
       if (errno == EINTR) {
         D("IO: FD(%d) interrupted\n", cl->fd.fd);
         continue;
-      } else if ((sec > 0) && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+      }
+      /**
+       * 非阻塞模式，循环写完所有数据
+       */
+      else if ((sec > 0) && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+        //数据读/写完应该跳出去，为什么还要用uh_socket_wait的select？
         if (!uh_socket_wait(fd, sec, true))
           return -1;
       } else {
@@ -167,6 +172,9 @@ int uh_tcp_send(struct client *cl, const char *buf, int len) {
   return __uh_raw_send(cl, buf, len, seconds, uh_tcp_send_lowlevel);
 }
 
+/**
+ * 读取SOCKET数据
+ */
 static int __uh_raw_recv(struct client *cl, char *buf, int len, int sec,
                          int (*rfn)(struct client *, char *, int)) {
   ssize_t rv;
@@ -174,9 +182,21 @@ static int __uh_raw_recv(struct client *cl, char *buf, int len, int sec,
 
   while (true) {
     if ((rv = rfn(cl, buf, len)) < 0) {
+      /**
+       * 在socket服务器端，设置了信号捕获机制，有子进程，
+       * 当在父进程阻塞于慢系统调用时由父进程捕获到了一个有效信号时，
+       * 内核会致使accept返回一个EINTR错误(被中断的系统调用)
+       *
+       * accept、read、write、select、和open之类的函数来说，是可以进行重启的
+       */
       if (errno == EINTR) {
         continue;
-      } else if ((sec > 0) && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+      }
+      /**
+        * 非阻塞模式，循环读完所有数据
+        */
+      else if ((sec > 0) && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+        //数据读/写完应该跳出去，为什么还要用uh_socket_wait的select？
         if (!uh_socket_wait(fd, sec, false))
           return -1;
       } else {

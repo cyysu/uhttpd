@@ -244,7 +244,7 @@ static int uh_socket_bind(const char *host, const char *port,
       goto error;
     }
 
-    /* 把listener加到了一个全局的链表中 */
+    /* 把socket加到了一个全局的listener链表中 */
     if (!(l = uh_listener_add(sock, conf))) {
       fprintf(stderr, "uh_listener_add(): Failed to allocate memory\n");
       goto error;
@@ -257,6 +257,7 @@ static int uh_socket_bind(const char *host, const char *port,
 
     /* add socket to uloop */
     fd_cloexec(sock);
+    // fd注册到IO模型中，第二个参数为绑定的事件
     uh_ufd_add(&l->fd, uh_listener_cb, ULOOP_READ);
 
     bound++;
@@ -272,6 +273,9 @@ static int uh_socket_bind(const char *host, const char *port,
   return bound;
 }
 
+/**
+ * header请求解析
+ */
 static struct http_request *uh_http_header_parse(struct client *cl,
                                                  char *buffer, int buflen) {
   char *method = buffer;
@@ -355,7 +359,7 @@ static struct http_request *uh_http_header_parse(struct client *cl,
 
           hdrname = hdrdata = NULL;
         }
-
+        
         /* too large */
         else {
           D("SRV: HTTP: header too big (too many headers)\n");
@@ -400,6 +404,9 @@ static bool uh_http_header_check_method(const char *buf, ssize_t rlen) {
   return false;
 }
 
+/**
+ * 解析首部信息
+ */
 static struct http_request *uh_http_header_recv(struct client *cl) {
   char *bufptr = cl->httpbuf.buf;
   char *idxptr = NULL;
@@ -410,7 +417,7 @@ static struct http_request *uh_http_header_recv(struct client *cl) {
   memset(bufptr, 0, sizeof(cl->httpbuf.buf));
 
   while (blen > 0) {
-    /* receive data */
+    /* 如果没有读取到数据则跳到结束 */
     ensure_out(rlen = uh_tcp_recv(cl, bufptr, blen));
     D("SRV: Client(%d) peek(%d) = %d\n", cl->fd.fd, blen, rlen);
 
@@ -430,10 +437,20 @@ static struct http_request *uh_http_header_recv(struct client *cl) {
     blen -= rlen;
     bufptr += rlen;
 
+    /**
+     * strfind返回寻找字符串的第一个指针
+     */
     if ((idxptr = strfind(cl->httpbuf.buf, sizeof(cl->httpbuf.buf), "\r\n\r\n",
                           4))) {
       /* header read complete ... */
+      //定位到下一行
       cl->httpbuf.ptr = idxptr + 4;
+      /**
+       * 指针相减的陷阱两个指针相减，结果并不是两个指针数值上的差，
+       * 而是把这个差除以指针指向类型的大小的结果。
+       *
+       * 如果两个指针向同一个数组，它们就可以相减，其为结果为两个指针之间的元素数目
+       */
       cl->httpbuf.len = bufptr - cl->httpbuf.ptr;
 
       return uh_http_header_parse(cl, cl->httpbuf.buf,
@@ -461,6 +478,10 @@ static int uh_path_match(const char *prefix, const char *url) {
 }
 #endif
 
+/**
+ * 在分发过程（不包括lua请求）当中，会根据path的前缀来判断是CGI请求还是静态文件请求，默认的CGI前缀是/cgi-bin
+ * CGI请求进入uh_cgi_request，文件请求进入uh_file_request，lua请求则会进入lua_request
+ */
 static bool uh_dispatch_request(struct client *cl, struct http_request *req) {
   struct path_info *pin;
 #ifdef HAVE_CGI
@@ -540,13 +561,14 @@ static void uh_listener_cb(struct uloop_fd *u, unsigned int events) {
   if (serv->n_clients >= conf->max_requests)
     return;
 
-  /* handle new connections */
+  /* 处理新连接 */
   if ((new_fd = accept(u->fd, (struct sockaddr *)&sa, &sl)) != -1) {
     D("SRV: Server(%d) accept => Client(%d)\n", u->fd, new_fd);
 
-    /* add to global client list */
+    /* 将新连接添加到全局client链表中 */
     if ((cl = uh_client_add(new_fd, serv, &sa)) != NULL) {
       /* add client socket to global fdset */
+      /* 将socket可读事件添加到监听的IO模型中 */
       uh_ufd_add(&cl->fd, uh_socket_cb, ULOOP_READ);
       fd_cloexec(cl->fd.fd);
 
@@ -635,22 +657,33 @@ static void uh_client_cb(struct client *cl, unsigned int events) {
 
   D("SRV: Client(%d) enter callback\n", cl->fd.fd);
 
-  /* undispatched yet */
+  //如果还没分发请求
   if (!cl->dispatched) {
-    /* we have no headers yet and this was a write event, ignore... */
+    /* 还没有首部而且又是一个写事件 */
     if (!(events & ULOOP_READ)) {
       D("SRV: Client(%d) ignoring write event before headers\n", cl->fd.fd);
       return;
     }
 
-    /* attempt to receive and parse headers */
+    /* 尝试获取和解析首部 */
     if (!(req = uh_http_header_recv(cl))) {
       D("SRV: Client(%d) failed to receive header\n", cl->fd.fd);
       uh_client_shutdown(cl);
       return;
     }
 
-    /* process expect headers */
+    /**
+     * The Expect request-header field is used to indicate that
+     * particular server behaviors are required by the client.
+     *
+     * 在使用curl做POST的时候, 当要POST的数据大于1024字节的时候,
+     * curl并不会直接就发起POST请求, 而是会分为俩步,
+     * 1. 发送一个请求, 包含一个Expect:100-continue, 询问Server使用愿意接受数据
+     * 2. 接收到Server返回的100-continue应答以后, 才把数据POST给Server
+     *
+     * 解决方法
+     * 手动设置Expect的值为false或者空，即不进行握手，而直接Post数据。
+     */
     foreach_header(i, req->headers) {
       if (strcasecmp(req->headers[i], "Expect"))
         continue;
@@ -671,7 +704,7 @@ static void uh_client_cb(struct client *cl, unsigned int events) {
       }
     }
 
-    /* RFC1918 filtering */
+    /* 过滤RFC1918类型的IP */
     if (conf->rfc1918_filter && sa_rfc1918(&cl->peeraddr) &&
         !sa_rfc1918(&cl->servaddr)) {
       uh_http_sendhf(cl, 403, "Forbidden", "Rejected request from RFC1918 IP "
@@ -967,6 +1000,8 @@ sigaction *oldact);
       2、timeout定时器处理
       3、当前进程的子进程的维护
   */
+
+  //初始化IO模型
   uloop_init();
 
   //获取运行参数

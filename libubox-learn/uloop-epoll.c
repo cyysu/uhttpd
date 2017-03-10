@@ -54,6 +54,9 @@ static int uloop_init_pollfd(void) {
   return 0;
 }
 
+/**
+ * 注册epoll配置
+ */
 static int register_poll(struct uloop_fd *fd, unsigned int flags) {
   struct epoll_event ev;
   int op = fd->registered ? EPOLL_CTL_MOD : EPOLL_CTL_ADD;
@@ -83,7 +86,11 @@ static int __uloop_fd_delete(struct uloop_fd *sock) {
 }
 
 /**
- * 处理epoll监听到的事件
+ * 将epoll监听到的事件封装到全局变量cur_fds
+ *
+ * 为什么还要封装一层？
+ * 因为IO模型可能有多种，epoll只是其中一种
+ * 封装好之后让uloop.c统一处理
  */
 static int uloop_fetch_events(int timeout) {
   int n, nfds;
