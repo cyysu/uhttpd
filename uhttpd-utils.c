@@ -276,14 +276,29 @@ int uh_http_sendc(struct client *cl, const char *data, int len) {
   return 0;
 }
 
+/**
+ * 响应http请求
+ */
 int uh_http_sendf(struct client *cl, struct http_request *req, const char *fmt,
                   ...) {
+  // va_list 类型的变量是指向参数地址的指针，
+  // 因为得到参数的地址之后，再结合参数的类型，才能得到参数的值
   va_list ap;
   char buffer[UH_LIMIT_MSGHEAD];
   int len;
 
+  /**
+   * 原型： void va_start(va_list arg_ptr,prev_param);
+   * 功能：以固定参数的地址为起点确定变参的内存起始地址，获取第一个参数的首地址
+   * 返回值：无
+   */
   va_start(ap, fmt);
   len = vsnprintf(buffer, sizeof(buffer), fmt, ap);
+  /**
+   * 原型：void  va_end(va_list arg_ptr);
+   * 功能：将arg_ptr指针置0
+   * 返回值：无
+   */
   va_end(ap);
 
   if ((req != NULL) && (req->version > UH_HTTP_VER_1_0))

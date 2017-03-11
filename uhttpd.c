@@ -275,13 +275,20 @@ static int uh_socket_bind(const char *host, const char *port,
 
 /**
  * header请求解析
+ * @param cl 客户端结构体
+ * @param buffer 请求报文
+ * @param buflen 请求报文长度
  */
 static struct http_request *uh_http_header_parse(struct client *cl,
                                                  char *buffer, int buflen) {
+  //请求方法
   char *method = buffer;
+  //请求路径
   char *path = NULL;
+  //请求HTTP版本
   char *version = NULL;
 
+  //起始行指针
   char *headers = NULL;
   char *hdrname = NULL;
   char *hdrdata = NULL;
@@ -293,20 +300,22 @@ static struct http_request *uh_http_header_parse(struct client *cl,
 
   /* terminate initial header line */
   if ((headers = strfind(buffer, buflen, "\r\n", 2)) != NULL) {
+    //请求报文结尾添加结束符
     buffer[buflen - 1] = 0;
 
+    //\r\n替换成结束符
     *headers++ = 0;
     *headers++ = 0;
 
-    /* find request path */
+    /* 获取请求地址 */
     if ((path = strchr(buffer, ' ')) != NULL)
       *path++ = 0;
 
-    /* find http version */
+    /* 获取请求HTTP版本 */
     if ((path != NULL) && ((version = strchr(path, ' ')) != NULL))
       *version++ = 0;
 
-    /* check method */
+    /* 检查HTTP方法 */
     if (method && !strcmp(method, "GET"))
       req->method = UH_HTTP_MSG_GET;
     else if (method && !strcmp(method, "POST"))
@@ -319,7 +328,7 @@ static struct http_request *uh_http_header_parse(struct client *cl,
       return NULL;
     }
 
-    /* check path */
+    /* 检查是否有请求地址 */
     if (!path || !strlen(path)) {
       /* malformed request */
       uh_http_response(cl, 400, "Bad Request");
@@ -328,7 +337,7 @@ static struct http_request *uh_http_header_parse(struct client *cl,
       req->url = path;
     }
 
-    /* check version */
+    /* 检查HTTP版本 */
     if (version && !strcmp(version, "HTTP/0.9"))
       req->version = UH_HTTP_VER_0_9;
     else if (version && !strcmp(version, "HTTP/1.0"))
@@ -346,7 +355,10 @@ static struct http_request *uh_http_header_parse(struct client *cl,
 
     /* process header fields */
     for (i = (int)(headers - buffer); i < buflen; i++) {
-      /* found eol and have name + value, push out header tuple */
+      /**
+       * found eol and have name + value, push out header tuple
+       * 找到了首部键值对，存到http_request的headers中
+       */
       if (hdrname && hdrdata && (buffer[i] == '\r' || buffer[i] == '\n')) {
         buffer[i] = 0;
 
@@ -359,7 +371,6 @@ static struct http_request *uh_http_header_parse(struct client *cl,
 
           hdrname = hdrdata = NULL;
         }
-        
         /* too large */
         else {
           D("SRV: HTTP: header too big (too many headers)\n");
@@ -367,24 +378,28 @@ static struct http_request *uh_http_header_parse(struct client *cl,
           return NULL;
         }
       }
-
-      /* have name but no value and found a colon, start of value */
+      /**
+       * have name but no value and found a colon, start of value
+       * 获取键名对应的键值
+       */
       else if (hdrname && !hdrdata && ((i + 1) < buflen) &&
                (buffer[i] == ':')) {
         buffer[i] = 0;
         hdrdata = &buffer[i + 1];
-
+        //如果中间有空格，定位到空格后面
         while ((hdrdata + 1) < (buffer + buflen) && *hdrdata == ' ')
           hdrdata++;
       }
-
-      /* have no name and found [A-Za-z], start of name */
+      /**
+       * have no name and found [A-Za-z], start of name
+       * 获取请求首部键名
+       */
       else if (!hdrname && isalpha(buffer[i])) {
         hdrname = &buffer[i];
       }
     }
 
-    /* valid enough */
+    /* 请求报文验证没问题 */
     req->redirect_status = 200;
     return req;
   }
@@ -405,7 +420,7 @@ static bool uh_http_header_check_method(const char *buf, ssize_t rlen) {
 }
 
 /**
- * 解析首部信息
+ * 解析请求报文
  */
 static struct http_request *uh_http_header_recv(struct client *cl) {
   char *bufptr = cl->httpbuf.buf;
@@ -426,7 +441,9 @@ static struct http_request *uh_http_header_recv(struct client *cl) {
       return NULL;
     }
 
-    /* first read attempt, check for valid method signature */
+    /**
+     * 如果是第一次read，则检查头部信息
+     */
     if ((bufptr == cl->httpbuf.buf) &&
         !uh_http_header_check_method(bufptr, rlen)) {
       D("SRV: Client(%d) no valid HTTP method, abort\n", cl->fd.fd);
@@ -434,22 +451,35 @@ static struct http_request *uh_http_header_recv(struct client *cl) {
       return NULL;
     }
 
+    /**
+     * 计算是否已经超过buffer的大小
+     */
     blen -= rlen;
+
+    /**
+     * bufptr指针移到所读到数据的最后
+     * 以便读入的新数据追加到cl->httpbuf.buf数组中
+     */
     bufptr += rlen;
 
     /**
      * strfind返回寻找字符串的第一个指针
+     * 当找到请求报文结尾（HTTP请求报文最后为 两个回车符换行符）
      */
     if ((idxptr = strfind(cl->httpbuf.buf, sizeof(cl->httpbuf.buf), "\r\n\r\n",
                           4))) {
-      /* header read complete ... */
-      //定位到下一行
+      /* 请求报文已经全部读取 */
+
+      //指针移动到buffer最后
       cl->httpbuf.ptr = idxptr + 4;
+
       /**
        * 指针相减的陷阱两个指针相减，结果并不是两个指针数值上的差，
        * 而是把这个差除以指针指向类型的大小的结果。
        *
        * 如果两个指针向同一个数组，它们就可以相减，其为结果为两个指针之间的元素数目
+       *
+       * 为什么用两个已经移动到buffer最后的指针相减？
        */
       cl->httpbuf.len = bufptr - cl->httpbuf.ptr;
 
@@ -659,13 +689,13 @@ static void uh_client_cb(struct client *cl, unsigned int events) {
 
   //如果还没分发请求
   if (!cl->dispatched) {
-    /* 还没有首部而且又是一个写事件 */
+    /* 还没有请求报文而且又是一个写事件 */
     if (!(events & ULOOP_READ)) {
       D("SRV: Client(%d) ignoring write event before headers\n", cl->fd.fd);
       return;
     }
 
-    /* 尝试获取和解析首部 */
+    /* 尝试获取和解析请求报文 */
     if (!(req = uh_http_header_recv(cl))) {
       D("SRV: Client(%d) failed to receive header\n", cl->fd.fd);
       uh_client_shutdown(cl);
@@ -679,16 +709,18 @@ static void uh_client_cb(struct client *cl, unsigned int events) {
      * 在使用curl做POST的时候, 当要POST的数据大于1024字节的时候,
      * curl并不会直接就发起POST请求, 而是会分为俩步,
      * 1. 发送一个请求, 包含一个Expect:100-continue, 询问Server使用愿意接受数据
-     * 2. 接收到Server返回的100-continue应答以后, 才把数据POST给Server
+     * 2. 接收到Server返回的100 Continue应答以后, 才把数据POST给Server
      *
      * 解决方法
      * 手动设置Expect的值为false或者空，即不进行握手，而直接Post数据。
      */
     foreach_header(i, req->headers) {
+      //处理Expect:100-continue请求首部
       if (strcasecmp(req->headers[i], "Expect"))
         continue;
 
       if (strcasecmp(req->headers[i + 1], "100-continue")) {
+        //如果首部name是Expect，但是value不等于100-continue，则返回首部信息有误
         D("SRV: Client(%d) unknown expect header (%s)\n", cl->fd.fd,
           req->headers[i + 1]);
 
