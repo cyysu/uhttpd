@@ -276,6 +276,9 @@ out:
   return false;
 }
 
+/**
+ * CGI请求处理
+ */
 bool uh_cgi_request(struct client *cl, struct path_info *pi,
                     struct interpreter *ip) {
   int i;
@@ -294,7 +297,12 @@ bool uh_cgi_request(struct client *cl, struct path_info *pi,
     return false;
   }
 
-  /* spawn pipes for me->child, child->me */
+  /**
+   * spawn pipes for me->child, child->me
+   *
+   * 管道是半双工的：半双工（half-duplex）的系统允许二台设备之间的双向数据传输，但不能同时进行
+   * 由描述字fd[0]表示，称其为管道读端；另一端则只能用于写，由描述字fd[1]来表示，称其为管道写端
+   */
   if ((pipe(rfd) < 0) || (pipe(wfd) < 0)) {
     if (rfd[0] > 0)
       close(rfd[0]);
@@ -320,13 +328,13 @@ bool uh_cgi_request(struct client *cl, struct path_info *pi,
 
     return false;
 
-  /* exec child */
+  /* 执行子线程 */
   case 0:
 #ifdef DEBUG
     sleep(atoi(getenv("UHTTPD_SLEEP_ON_FORK") ?: "0"));
 #endif
 
-    /* do not leak parent epoll descriptor */
+    /* do not leak parent epoll descriptor(描述符) */
     uloop_done();
 
     /* close loose pipe ends */

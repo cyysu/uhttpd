@@ -257,6 +257,10 @@ int uh_http_sendhf(struct client *cl, int code, const char *summary,
   return 0;
 }
 
+/**
+ * 分块传输有利于大文件或者复杂页面尽快地响应内容给用户
+ * 只在HTTP协议1.1版本提供
+ */
 int uh_http_sendc(struct client *cl, const char *data, int len) {
   char chunk[8];
   int clen;
@@ -264,6 +268,16 @@ int uh_http_sendc(struct client *cl, const char *data, int len) {
   if (len == -1)
     len = strlen(data);
 
+  /**
+   * 如果一个HTTP消息（请求消息或应答消息）的Transfer-Encoding消息头的值为chunked，
+   * 那么，消息体由数量未定的块组成，并以最后一个大小为0的块为结束。
+   * 每一个非空的块都以该块包含数据的字节数（字节数以十六进制表示）开始，跟随一个CRLF
+   * （回车及换行），
+   * 然后是数据本身，最后块CRLF结束。在一些实现中，块大小和CRLF之间填充有白空格（0x20）。
+   * 最后一块是单行，由块大小（0），一些可选的填充白空格，以及CRLF。
+   * 最后一块不再包含任何数据，但是可以发送可选的尾部，包括消息头字段。
+   * 消息最后以CRLF结尾。
+   */
   if (len > 0) {
     clen = snprintf(chunk, sizeof(chunk), "%X\r\n", len);
     ensure_ret(uh_tcp_send(cl, chunk, clen));
@@ -277,7 +291,7 @@ int uh_http_sendc(struct client *cl, const char *data, int len) {
 }
 
 /**
- * 响应http请求
+ * 格式化响应http请求
  */
 int uh_http_sendf(struct client *cl, struct http_request *req, const char *fmt,
                   ...) {
@@ -314,6 +328,27 @@ int uh_http_send(struct client *cl, struct http_request *req, const char *buf,
   if (len < 0)
     len = strlen(buf);
 
+  /**
+   * 分块传输以及整块发送是如何处理的？
+   * 整块发送：
+   * 浏览器可以通过 Content-Length
+   * 的长度信息，判断出响应实体已结束，浏览器才能正常输出内容并结束请求。
+   * 由于 Content-Length
+   * 字段必须真实反映实体长度，但实际应用中，有些时候实体长度并没那么好获得，
+   * 例如实体来自于网络文件，或者由动态语言生成。这时候要想准确获取长度，只能开一个足够大的
+   * buffer，等内容全部生成好再计算。
+   * 但这样做一方面需要更大的内存开销，另一方面也会让客户端等更久。
+   *
+   * 分块传输：
+   * 在头部加入 Transfer-Encoding: chunked 之后，就代表这个报文采用了分块编码。
+   * 这时，报文中的实体需要改为用一系列分块来传输。每个分块包含十六进制的长度值和数据，长度值独占一行，
+   * 长度不包括它结尾的 CRLF（\r\n），也不包括分块数据结尾的 CRLF。
+   * 最后一个分块长度值必须为
+   * 0，对应的分块数据没有内容，表示实体结束，浏览器就会输出这部分数据。
+   *
+   *
+   * 该版本不支持http_keepalive，所以暂无法测试分块传输
+   */
   if ((req != NULL) && (req->version > UH_HTTP_VER_1_0))
     ensure_ret(uh_http_sendc(cl, buf, len));
   else if (len > 0)
@@ -503,22 +538,33 @@ struct index_file *uh_index_add(const char *filename) {
   return new;
 }
 
-/* Returns NULL on error.
-** NB: improperly encoded URL should give client 400 [Bad Syntax]; returning
-** NULL here causes 404 [Not Found], but that's not too unreasonable. */
+/*
+ * Returns NULL on error.
+ * NB: improperly encoded URL should give client 400 [Bad Syntax]; returning
+ * NULL here causes 404 [Not Found], but that's not too unreasonable.
+ * 查找路径信息，例url:/art/1.html?a=1
+*/
 struct path_info *uh_path_lookup(struct client *cl, const char *url) {
+  //根据请求路径获取服务器真实存在的路径
   static char path_phys[PATH_MAX];
+  //路径信息
   static char path_info[PATH_MAX];
+  //路径信息集合
   static struct path_info p;
 
+  // buffer记录访问的绝对路径
   char buffer[UH_LIMIT_MSGHEAD];
+  // web根目录(/home/xxx/uhttpd/docroot)
   char *docroot = cl->server->conf->docroot;
   char *pathptr = NULL;
 
   int slash = 0;
+  //是否跟踪符号链接对应的文件
   int no_sym = cl->server->conf->no_symlinks;
   int i = 0;
+  //文件状态
   struct stat s;
+  //默认文档
   struct index_file *idx;
 
   /* back out early if url is undefined */
@@ -530,15 +576,20 @@ struct path_info *uh_path_lookup(struct client *cl, const char *url) {
   memset(buffer, 0, sizeof(buffer));
   memset(&p, 0, sizeof(p));
 
-  /* copy docroot */
+  // buffer初始化为根目录
   memcpy(buffer, docroot, min(strlen(docroot), sizeof(buffer) - 1));
 
-  /* separate query string from url */
+  /**
+   * 将请求路径加到buffer中（不含参数）
+   * buffer转换后：/home/xxx/uhttpd/docroot/art/1.html
+   */
   if ((pathptr = strchr(url, '?')) != NULL) {
+    //从URL中分离出查询字符串
     p.query = pathptr[1] ? pathptr + 1 : NULL;
 
     /* urldecode component w/o query */
     if (pathptr > url) {
+      // pathptr - url:/art/1.html
       if (uh_urldecode(&buffer[strlen(docroot)],
                        sizeof(buffer) - strlen(docroot) - 1, url,
                        pathptr - url) < 0) {
@@ -546,7 +597,6 @@ struct path_info *uh_path_lookup(struct client *cl, const char *url) {
       }
     }
   }
-
   /* no query string, decode all of url */
   else {
     if (uh_urldecode(&buffer[strlen(docroot)],
@@ -559,41 +609,71 @@ struct path_info *uh_path_lookup(struct client *cl, const char *url) {
   /* create canon path */
   for (i = strlen(buffer), slash = (buffer[max(0, i - 1)] == '/'); i >= 0;
        i--) {
+    /**
+     * 如果真实路径不存在，则往上一级寻找直到真实路径为止
+     */
     if ((buffer[i] == 0) || (buffer[i] == '/')) {
       memset(path_info, 0, sizeof(path_info));
+      /**
+       * void * memcpy ( void * dest, const void * src, size_t num );
+       * memcpy() 会复制 src 所指的内存内容的前 num 个字节到
+       * dest所指的内存地址上
+       *
+       * path_info：/home/xxx/uhttpd/docroot/art/1.html
+       */
       memcpy(path_info, buffer, min(i + 1, sizeof(path_info) - 1));
 
+      /**
+       * 1、realpath()用来将参数 path 所指的相对路径转换成绝对路径后存于参数
+       * resolved_path 所指的字符串数组或指针中。
+       * 当路径文件不存在时也会丢出 NULL，但 resolved_path
+       * 中仍会有化简后的路径。
+       *
+       * 2、canonpath
+       * No physical check on the filesystem
+       * but a logical cleanup of a path.
+       */
       if (no_sym ? realpath(path_info, path_phys)
                  : canonpath(path_info, path_phys)) {
         memset(path_info, 0, sizeof(path_info));
+        // path_info有可能为虚拟路径
         memcpy(path_info, &buffer[i],
                min(strlen(buffer) - i, sizeof(path_info) - 1));
-
         break;
       }
     }
   }
 
-  /* check whether found path is within docroot */
+  /**
+   * path_phys: /home/xxx/uhttpd/docroot/art/1.html
+   *
+   * 检查路径是否在设置的web根目录中
+   */
   if (strncmp(path_phys, docroot, strlen(docroot)) ||
       ((path_phys[strlen(docroot)] != 0) &&
        (path_phys[strlen(docroot)] != '/'))) {
     return NULL;
   }
 
-  /* test current path */
+  /**
+   * stat(const char * file_name, struct stat *buf);
+   * 用来将参数file_name 所指的文件状态, 复制到参数buf 所指的结构中
+   * 返回值：执行成功则返回0，失败返回-1，错误代码存于errno。
+   */
   if (!stat(path_phys, &p.stat)) {
-    /* is a regular file */
+    /* S_IFREG 0100000 一般文件 */
     if (p.stat.st_mode & S_IFREG) {
       p.root = docroot;
       p.phys = path_phys;
       p.name = &path_phys[strlen(docroot)];
       p.info = path_info[0] ? path_info : NULL;
     }
-
-    /* is a directory */
+    /**
+     * S_IFDIR 0040000 目录
+     * 如果路径是真实存在的
+     */
     else if ((p.stat.st_mode & S_IFDIR) && !strlen(path_info)) {
-      /* ensure trailing slash */
+      /* 结尾添加‘/’ */
       if (path_phys[strlen(path_phys) - 1] != '/')
         path_phys[strlen(path_phys)] = '/';
 
@@ -614,6 +694,7 @@ struct path_info *uh_path_lookup(struct client *cl, const char *url) {
 
         p.redirected = 1;
       } else {
+        //找到默认文档并赋值
         for (idx = uh_index_files; idx; idx = idx->next) {
           strncat(buffer, idx->name, sizeof(buffer));
 
@@ -638,6 +719,9 @@ struct path_info *uh_path_lookup(struct client *cl, const char *url) {
 
 static struct auth_realm *uh_realms = NULL;
 
+/**
+ * 访问路径PATH进行权限设置
+ */
 struct auth_realm *uh_auth_add(char *path, char *user, char *pass) {
   struct auth_realm *new = NULL;
   struct passwd *pwd;
@@ -691,9 +775,12 @@ struct auth_realm *uh_auth_add(char *path, char *user, char *pass) {
   return NULL;
 }
 
+/**
+ * 检查请求路径权限
+ */
 int uh_auth_check(struct client *cl, struct http_request *req,
                   struct path_info *pi) {
-  int i, plen, rlen, protected;
+  int i, plen, rlen;
   char buffer[UH_LIMIT_MSGHEAD];
   char *user = NULL;
   char *pass = NULL;
@@ -701,24 +788,26 @@ int uh_auth_check(struct client *cl, struct http_request *req,
   struct auth_realm *realm = NULL;
 
   plen = strlen(pi->name);
-protected
-  = 0;
+  int protect = 0;
 
-  /* check whether at least one realm covers the requested url */
+  /**
+   * 检查请求路径是否在权限限制realm范围内
+   */
   for (realm = uh_realms; realm; realm = realm->next) {
     rlen = strlen(realm->path);
 
     if ((plen >= rlen) && !strncasecmp(pi->name, realm->path, rlen)) {
       req->realm = realm;
-    protected
-      = 1;
+      protect = 1;
       break;
     }
   }
 
   /* requested resource is covered by a realm */
-  if (protected) {
-    /* try to get client auth info */
+  if (protect) {
+    /**
+     * 获取请求报文中的验证信息
+     */
     foreach_header(i, req->headers) {
       if (!strcasecmp(req->headers[i], "Authorization") &&
           (strlen(req->headers[i + 1]) > 6) &&
@@ -759,7 +848,7 @@ protected
       }
     }
 
-    /* 401 */
+    /* 验证没通过，返回没授权401 */
     uh_http_sendf(cl, NULL, "%s 401 Authorization Required\r\n"
                             "WWW-Authenticate: Basic realm=\"%s\"\r\n"
                             "Content-Type: text/plain\r\n"

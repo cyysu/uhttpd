@@ -26,7 +26,7 @@
  *
  * HAVE_CGI HAVE_LUA HAVE_UBUS是在CMake中定义的（CMakeLists.txt）
  * OPTION(CGI_SUPPORT "CGI support" ON)
- * 此时表示，如果用户没有定义过address,那我address的默认值就是ON
+ * 此时表示，如果用户没有定义过address,那么address的默认值就是ON
  *
  * 如何设置CMake中的option变量值？
  *
@@ -63,6 +63,9 @@ static int run = 1;
  */
 static void uh_sigterm(int sig) { run = 0; }
 
+/**
+ * 使用配置文件进行配置
+ */
 static void uh_config_parse(struct config *conf) {
   FILE *c;
   char line[512];
@@ -77,12 +80,14 @@ static void uh_config_parse(struct config *conf) {
 
     while (fgets(line, sizeof(line) - 1, c)) {
       if ((line[0] == '/') && (strchr(line, ':') != NULL)) {
+        //检查路径权限设置格式
         if (!(col1 = strchr(line, ':')) || (*col1++ = 0) ||
             !(col2 = strchr(col1, ':')) || (*col2++ = 0) ||
             !(eol = strchr(col2, '\n')) || (*eol++ = 0)) {
           continue;
         }
 
+        //新增路径权限设置
         if (!uh_auth_add(line, col1, col2)) {
           fprintf(stderr, "Notice: No password set for user %s, ignoring "
                           "authentication on %s\n",
@@ -94,6 +99,7 @@ static void uh_config_parse(struct config *conf) {
           continue;
         }
 
+        //新增默认文档
         if (!uh_index_add(strdup(col1))) {
           fprintf(stderr, "Unable to add index filename %s: "
                           "Out of memory\n",
@@ -105,6 +111,7 @@ static void uh_config_parse(struct config *conf) {
           continue;
         }
 
+        // 404处理设置
         conf->error_handler = strdup(col1);
       }
 #ifdef HAVE_CGI
@@ -115,6 +122,7 @@ static void uh_config_parse(struct config *conf) {
           continue;
         }
 
+        // 新增CGI解析器
         if (!uh_interpreter_add(col1, col2)) {
           fprintf(stderr, "Unable to add interpreter %s for extension %s: "
                           "Out of memory\n",
@@ -497,6 +505,9 @@ out:
 }
 
 #if defined(HAVE_LUA) || defined(HAVE_CGI)
+/**
+ * 检查是否匹配某个类型的路径
+ */
 static int uh_path_match(const char *prefix, const char *url) {
   if ((strstr(url, prefix) == url) &&
       ((prefix[strlen(prefix) - 1] == '/') || (strlen(url) == strlen(prefix)) ||
@@ -535,9 +546,10 @@ static bool uh_dispatch_request(struct client *cl, struct http_request *req) {
 
       /* dispatch request */
       if ((pin = uh_path_lookup(cl, req->url)) != NULL) {
-    /* auth ok? */
+    /* 检查请求路径权限 */
     if (!pin->redirected && uh_auth_check(cl, req, pin)) {
 #ifdef HAVE_CGI
+      /* 是否在CGI前缀目录下的文件或者文件后缀是否有关联的解析器 */
       if (uh_path_match(conf->cgi_prefix, pin->name) ||
           (ipr = uh_interpreter_lookup(pin->phys)) != NULL) {
         return uh_cgi_request(cl, pin, ipr);
@@ -549,7 +561,7 @@ static bool uh_dispatch_request(struct client *cl, struct http_request *req) {
 
   /* 404 - pass 1 */
   else {
-    /* Try to invoke an error handler */
+    /* 尝试触发404错误处理 */
     if ((pin = uh_path_lookup(cl, conf->error_handler)) != NULL) {
       /* auth ok? */
       if (uh_auth_check(cl, req, pin)) {
@@ -746,7 +758,7 @@ static void uh_client_cb(struct client *cl, unsigned int events) {
       return;
     }
 
-    /* 分发请求 */
+    /* 分发请求，做出响应 */
     if (!uh_dispatch_request(cl, req)) {
       D("SRV: Client(%d) failed to dispach request\n", cl->fd.fd);
       uh_client_shutdown(cl);
@@ -780,6 +792,7 @@ static void uh_client_cb(struct client *cl, unsigned int events) {
 
   if (!cl->cb(cl)) {
     D("SRV: Client(%d) response callback signalized EOF\n", cl->fd.fd);
+    //关闭客户端连接
     uh_client_shutdown(cl);
     return;
   }
@@ -1142,7 +1155,7 @@ sigaction *oldact);
 
     /* don't follow symlinks */
     case 'S':
-      //跟踪符号链接对应的文件
+      //是否跟踪符号链接对应的文件
       conf.no_symlinks = 1;
       break;
 

@@ -603,8 +603,8 @@ int uloop_run(void) {
 }
 
 /**
-* 销毁事件循环
-*/
+ * 销毁事件循环
+ */
 void uloop_done(void) {
   if (poll_fd >= 0) {
     close(poll_fd);
