@@ -221,13 +221,14 @@ static void uloop_run_events(int timeout) {
   }
 }
 
-/*
-  注册一个新描述符到IO模型中
-*/
+/**
+ * 注册一个新描述符到IO模型中
+ */
 int uloop_fd_add(struct uloop_fd *sock, unsigned int flags) {
   unsigned int fl;
   int ret;
 
+  /* 事件既不是读也不是写则删除该描述符 */
   if (!(flags & (ULOOP_READ | ULOOP_WRITE)))
     return uloop_fd_delete(sock);
 

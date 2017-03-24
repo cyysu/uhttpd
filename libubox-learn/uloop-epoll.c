@@ -63,12 +63,15 @@ static int register_poll(struct uloop_fd *fd, unsigned int flags) {
 
   memset(&ev, 0, sizeof(struct epoll_event));
 
+  /* 设置监听读事件 */
   if (flags & ULOOP_READ)
     ev.events |= EPOLLIN | EPOLLRDHUP;
 
+  /* 设置监听写事件 */
   if (flags & ULOOP_WRITE)
     ev.events |= EPOLLOUT;
 
+  /* 设置是否为ET模式 */
   if (flags & ULOOP_EDGE_TRIGGER)
     ev.events |= EPOLLET;
 

@@ -520,8 +520,9 @@ static int uh_path_match(const char *prefix, const char *url) {
 #endif
 
 /**
- * 在分发过程（不包括lua请求）当中，会根据path的前缀来判断是CGI请求还是静态文件请求，默认的CGI前缀是/cgi-bin
- * CGI请求进入uh_cgi_request，文件请求进入uh_file_request，lua请求则会进入lua_request
+ * 1、在分发过程（不包括lua请求）当中，会根据path的前缀来判断是CGI请求还是静态文件请求，默认的CGI前缀是/cgi-bin
+ * （CGI请求进入uh_cgi_request，文件请求进入uh_file_request，lua请求则会进入lua_request）
+ * 2、初始化cl中执行动态脚本后的设置以及处理函数
  */
 static bool uh_dispatch_request(struct client *cl, struct http_request *req) {
   struct path_info *pin;
@@ -690,6 +691,9 @@ static void uh_timeout_cb(struct uloop_timeout *t) {
 }
 #endif
 
+/**
+ * 客户端请求处理函数
+ */
 static void uh_client_cb(struct client *cl, unsigned int events) {
   int i;
   struct config *conf;
@@ -701,7 +705,7 @@ static void uh_client_cb(struct client *cl, unsigned int events) {
 
   //如果还没分发请求
   if (!cl->dispatched) {
-    /* 还没有请求报文而且又是一个写事件 */
+    /* 还没有请求报文而且又是一个读事件 */
     if (!(events & ULOOP_READ)) {
       D("SRV: Client(%d) ignoring write event before headers\n", cl->fd.fd);
       return;
@@ -780,6 +784,7 @@ static void uh_client_cb(struct client *cl, unsigned int events) {
       cl->proc.cb = uh_child_cb;
       uloop_process_add(&cl->proc);
 
+      /* 设置脚本执行时间 */
       cl->timeout.cb = uh_timeout_cb;
       uloop_timeout_set(&cl->timeout, conf->script_timeout * 1000);
     }
@@ -790,6 +795,7 @@ static void uh_client_cb(struct client *cl, unsigned int events) {
     cl->dispatched = true;
   }
 
+  //执行响应处理
   if (!cl->cb(cl)) {
     D("SRV: Client(%d) response callback signalized EOF\n", cl->fd.fd);
     //关闭客户端连接
@@ -1449,13 +1455,16 @@ sigaction *oldact);
       if (chdir("/"))
         perror("chdir()");
 
-      /*
-        标准输入、标准输出和标准出错处理。这三个文件分别对应文件描述符0、1、2
-        dup2()用来复制参数oldfd 所指的文件描述词, 并将它拷贝至参数newfd
-      后一块返回
-      */
-
-      // O_WRONLY 以只写方式打开文件
+      /**
+       * 标准输入、标准输出和标准出错处理。这三个文件分别对应文件描述符0、1、2
+       * dup2()用来复制参数oldfd 所指的文件描述词,
+       * 并将它拷贝至参数newfd后一块返回
+       *
+       * 某些守护进程打开/dev/null使其具有文件描述符0，1，2这样任何一个试图读标准输入、
+       * 写标准输出或标准出错的库历程都不会产生任何效果。
+       *
+       * O_WRONLY 以只写方式打开文件
+       */
       if ((cur_fd = open("/dev/null", O_WRONLY)) > -1)
         dup2(cur_fd, 0);
 
