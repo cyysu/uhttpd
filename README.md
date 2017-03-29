@@ -63,14 +63,33 @@ Usage: ./uhttpd -p [addr:]port [-h docroot]
         -m string       MD5 crypt given string
 ```
 
-# 流程
+# 简要流程
+```flow
+st=>start: uhttpd
+e=>end
+option=>operation: 配置参数配置
+wait=>operation: 等待请求
+accept=>operation: 接受请求
+resolve=>operation: 解析请求
+dispatch=>operation: 分发请求
+static=>operation: 静态文件
+cgi=>operation: CGI请求
+lua=>operation: LUA请求
+response=>operation: 响应请求
+new_read=>condition: 是否新连接？
+script_static=>condition: 是否静态文件？
+lua_cgi=>condition: 是否为lua？
+
+st->option->wait->new_read
+new_read(no)->accept->resolve->script_static
+new_read(yes, right)->wait
+script_static(yes)->static->response
+script_static(no)->lua_cgi
+lua_cgi(yes)->lua->response
+lua_cgi(no)->cgi->response
+response->e
 ```
-                                           |--->接受请求     
-                                           |--->解析请求     |--->静态文件
-uhttp--->启动参数配置--->启动服务器-等待请求--->                |--->CGI请求
-                                           |--->分发请求--->
-                                                           |--->LUA请求
-```                
+
 
 # 更多详情
 [uHTTPd [OpenWrt Wiki]](https://wiki.openwrt.org/zh-cn/doc/howto/http.uhttpd)

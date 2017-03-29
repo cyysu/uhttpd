@@ -959,6 +959,9 @@ void uh_client_shutdown(struct client *cl) {
   uh_client_remove(cl);
 }
 
+/**
+ * 清理请求
+ */
 void uh_client_remove(struct client *cl) {
   struct client *cur = NULL;
   struct client *prv = NULL;
@@ -990,6 +993,7 @@ void uh_client_remove(struct client *cl) {
   }
 }
 
+/* 注册文件描述符 */
 void uh_ufd_add(struct uloop_fd *u, uloop_fd_handler h, unsigned int ev) {
   if (h != NULL) {
     u->cb = h;

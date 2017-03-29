@@ -478,16 +478,14 @@ static struct http_request *uh_http_header_recv(struct client *cl) {
                           4))) {
       /* 请求报文已经全部读取 */
 
-      //指针移动到buffer最后
+      //指针移动到请求首部最后（请求正文初始位置）
       cl->httpbuf.ptr = idxptr + 4;
 
       /**
-       * 指针相减的陷阱两个指针相减，结果并不是两个指针数值上的差，
-       * 而是把这个差除以指针指向类型的大小的结果。
-       *
+       * 指针相减的陷阱两个指针相减，结果并不是两个指针数值上的差，而是把这个差除以指针指向类型的大小的结果。
        * 如果两个指针向同一个数组，它们就可以相减，其为结果为两个指针之间的元素数目
        *
-       * 为什么用两个已经移动到buffer最后的指针相减？
+       * 获取请求正文（例如：POST数据）的长度
        */
       cl->httpbuf.len = bufptr - cl->httpbuf.ptr;
 
@@ -769,7 +767,10 @@ static void uh_client_cb(struct client *cl, unsigned int events) {
       return;
     }
 
-    /* request handler spawned a pipe, register handler */
+    /**
+     * 请求处理产生一个CGI响应管道，则注册到监听中
+     * 比如：uhttpd_cgi则接收到CGI标准输出后，回调到uh_cgi_socket_cb
+     */
     if (cl->rpipe.fd > -1) {
       D("SRV: Client(%d) pipe(%d) spawned\n", cl->fd.fd, cl->rpipe.fd);
 

@@ -80,8 +80,9 @@ int uloop_fd_add(struct uloop_fd *sock, unsigned int flags);
 static void waker_consume(struct uloop_fd *fd, unsigned int events) {
   char buf[4];
 
-  while (read(fd->fd, buf, 4) > 0)
-    ;
+  while (read(fd->fd, buf, 4) > 0) {
+    D("waker_consume: read %s\n", buf);
+  }
 }
 
 static int waker_pipe = -1;
@@ -108,6 +109,10 @@ static int waker_init(void) {
   if (waker_pipe >= 0)
     return 0;
 
+  /**
+   * 管道对于管道两端的进程而言，就是一个文件，但它不是普通的文件，它不属于某种文件系统，
+   * 而是自立门户，单独构成一种文件系统，并且只存在于内存中
+   */
   if (pipe(fds) < 0)
     return -1;
 
@@ -117,14 +122,16 @@ static int waker_init(void) {
 
   waker_fd.fd = fds[0];
   waker_fd.cb = waker_consume;
+
+  //注册到uloop
   uloop_fd_add(&waker_fd, ULOOP_READ);
 
   return 0;
 }
 
-/*
-   初始化事件循环
-*/
+/**
+ * 初始化事件循环
+ */
 int uloop_init(void) {
   if (uloop_init_pollfd() < 0)
     return -1;
@@ -222,7 +229,7 @@ static void uloop_run_events(int timeout) {
 }
 
 /**
- * 注册一个新描述符到IO模型中
+ * 注册描述符到IO模型中
  */
 int uloop_fd_add(struct uloop_fd *sock, unsigned int flags) {
   unsigned int fl;
@@ -390,6 +397,14 @@ static void uloop_handle_processes(void) {
   do_sigchld = false;
 
   while (1) {
+    /**
+     * 定义函数：pid_t waitpid(pid_t pid, int * status, int options);
+     * 函数说明：waitpid()会暂时停止目前进程的执行, 直到有信号来到或子进程结束.
+     * 如果在调用wait()时子进程已经结束, 则wait()会立即返回子进程结束状态值.
+     * 子进程的结束状态值会由参数status 返回, 而子进程的进程识别码也会一快返回.
+     * 参数pid=-1 等待任何子进程, 相当于wait().
+     * 参数WNOHANG：如果没有任何已经结束的子进程则马上返回, 不予以等待.
+     */
     pid = waitpid(-1, &ret, WNOHANG);
     if (pid < 0 && errno == EINTR)
       continue;
@@ -410,45 +425,70 @@ static void uloop_handle_processes(void) {
   }
 }
 
+/**
+ * 通过写入字符到管道唤醒信号
+ */
 static void uloop_signal_wake(void) {
   do {
     if (write(waker_pipe, "w", 1) < 0) {
+      /**
+       * EINTR错误的产生：当阻塞于某个慢系统调用的一个进程捕获某个信号且相应信号处理函数返回时，
+       * 该系统调用可能返回一个EINTR错误。例如：在socket服务器端，设置了信号捕获机制，
+       * 有子进程，当在父进程阻塞于慢系统调用时由父进程捕获到了一个有效信号时，
+       * 内核会致使accept返回一个EINTR错误(被中断的系统调用)。
+       */
       if (errno == EINTR)
         continue;
     }
+    D("uloop_signal_wake: running\n");
     break;
   } while (1);
 }
 
+/**
+ * SIGINT (中断) 当用户按下时,通知前台进程组终止进程
+ * 用户中断回调
+ */
 static void uloop_handle_sigint(int signo) {
+  D("uloop_handle_sigint: signo：%d\n", signo);
   uloop_status = signo;
   uloop_cancelled = true;
   uloop_signal_wake();
 }
 
+/**
+ * SIGCHLD (子进程结束) 当子进程终止时通知父进程
+ * 子进程结束后回调
+ */
 static void uloop_sigchld(int signo) {
+  D("uloop_sigchld: running\n");
   do_sigchld = true;
   uloop_signal_wake();
 }
 
-/*
-  事件循环处理函数安装
-*/
+/**
+ * 信号回调注册
+ */
 static void uloop_install_handler(int signum, void (*handler)(int),
                                   struct sigaction *old, bool add) {
   struct sigaction s;
   struct sigaction *act;
 
   act = NULL;
-  /*
-    第二个参数为新的action的地址，第三个参数为被替换的旧action，如果不想保存（使用）旧的action，就设为NULL
+  /**
+   * sigaction是一个函数，可以用来查询或设置信号处理方式。
+   *
+   第二个参数为新的action的地址，第三个参数为被替换的旧action，如果不想保存（使用）旧的action，就设为NULL
    */
   sigaction(signum, NULL, &s);
 
   /* 如果是新增处理函数的操作 */
   if (add) {
-    /* 如果参数signum所指的信号的处理方法为默认值 */
-    /* 不重写已存在的自定义处理 */
+    /**
+     * SIG_DFL：默认信号处理程序
+     * 如果参数signum所指的信号的处理方法为默认值
+     * 不重写已存在的自定义处理
+     */
     if (s.sa_handler == SIG_DFL) {
       /*
         void * memcpy ( void * dest, const void * src, size_t num );
@@ -491,9 +531,10 @@ static void uloop_ignore_signal(int signum, bool ignore) {
   }
 }
 
-/*
-  信号设置
-*/
+/**
+ * 信号处理设置
+ * 信号机制是进程之间相互传递消息的一种方法，信号全称为软中断信号，也有人称作软中断
+ */
 static void uloop_setup_signals(bool add) {
   static struct sigaction old_sigint, old_sigchld, old_sigterm;
 
@@ -552,13 +593,13 @@ static void uloop_clear_processes(void) {
 
 bool uloop_cancelling(void) { return uloop_run_depth > 0 && uloop_cancelled; }
 
-/*
-  事件循环主处理入口
-  1.当某一个进程第一次调用uloop_run时，注册sigchld和sigint信号
-  2.循环获取当前时间，把超时的timeout处理掉，有一条timeout链表在维护
-  3.循环检测是否收到一个sigchld信号，如果收到，删除对应的子进程，有一条process子进程链表在维护
-  4.循环调用epoll_wait监听相应的触发事件文件描述符fd
-*/
+/**
+ * 事件循环主处理入口
+ * 1.当某一个进程第一次调用uloop_run时，注册sigchld和sigint信号
+ * 2.循环获取当前时间，把超时的timeout处理掉，有一条timeout链表在维护
+ * 3.循环检测是否收到一个sigchld信号，如果收到，删除对应的子进程，有一条process子进程链表在维护
+ * 4.循环调用epoll_wait监听相应的触发事件文件描述符fd
+ */
 int uloop_run(void) {
   struct timeval tv;
 
@@ -580,10 +621,10 @@ int uloop_run(void) {
     //把超时的timeout清理掉
     uloop_process_timeouts(&tv);
 
-    /*
-      SIGCHLD (子进程结束) 当子进程终止时通知父进程
-      收到一个sigchld的信号
-    */
+    /**
+     * SIGCHLD (子进程结束) 当子进程终止时通知父进程
+     * 收到一个sigchld的信号
+     */
     if (do_sigchld)
       uloop_handle_processes();
 

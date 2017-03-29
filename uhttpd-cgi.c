@@ -127,7 +127,7 @@ static char *uh_cgi_header_lookup(struct http_response *res,
 static void uh_cgi_shutdown(struct uh_cgi_state *state) { free(state); }
 
 /**
- * CGI处理回调
+ * CGI处理回调（响应）
  */
 static bool uh_cgi_socket_cb(struct client *cl) {
   int i, len, blen, hdroff;
@@ -137,9 +137,7 @@ static bool uh_cgi_socket_cb(struct client *cl) {
   struct http_response *res = &cl->response;
   struct http_request *req = &cl->request;
 
-  /**
-   * 存在未读的POST数据，写入post数据
-   */
+  /* 存在POST数据则传到CGI */
   while (state->content_length > 0) {
     /* remaining data in http head buffer ... */
     if (cl->httpbuf.len > 0) {
@@ -153,7 +151,8 @@ static bool uh_cgi_socket_cb(struct client *cl) {
       cl->httpbuf.ptr += len;
     }
 
-    /* read it from socket ... */
+    /* 如果请求Content-Type是有值的，但是还没获取到httpbuf中，则尝试再次从socket中读取
+       */
     else {
       len = uh_tcp_recv(cl, buf, min(state->content_length, sizeof(buf)));
 
@@ -169,7 +168,7 @@ static bool uh_cgi_socket_cb(struct client *cl) {
     else
       state->content_length = 0;
 
-    /* ... write to CGI process */
+    /* 将POST数据传给CGI脚本 */
     len = uh_raw_send(cl->wpipe.fd, buf, len, cl->server->conf->script_timeout);
 
     /* explicit EOF notification for the child */
@@ -543,6 +542,7 @@ bool uh_cgi_request(struct client *cl, struct path_info *pi,
     cl->rpipe.fd = rfd[0];
     /* wfd[0]绑定到子线程的标准输入 */
     cl->wpipe.fd = wfd[1];
+    /* 主线程ID */
     cl->proc.pid = child;
 
     /* make pipe non-blocking */
@@ -555,12 +555,13 @@ bool uh_cgi_request(struct client *cl, struct path_info *pi,
 
     D("CGI: Child(%d) created: rfd(%d) wfd(%d)\n", child, rfd[0], wfd[1]);
 
-		state->httpbuf.ptr = state->httpbuf.buf;
-		state->httpbuf.len = sizeof(state->httpbuf.buf);
+    state->httpbuf.ptr = state->httpbuf.buf;
+    state->httpbuf.len = sizeof(state->httpbuf.buf);
 
+    /* 设置为请求正文长度 */
     state->content_length = cl->httpbuf.len;
 
-    /* find content length */
+    /* 如果是POST方法，以首部Content-Length定义的长度为准 */
     if (req->method == UH_HTTP_MSG_POST) {
       foreach_header(i, req->headers) {
         if (!strcasecmp(req->headers[i], "Content-Length")) {
