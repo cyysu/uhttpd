@@ -64,6 +64,7 @@ Usage: ./uhttpd -p [addr:]port [-h docroot]
 ```
 
 # 简要流程
+<!--
 ```flow
 st=>start: uhttpd
 e=>end
@@ -89,7 +90,8 @@ lua_cgi(yes)->lua->response
 lua_cgi(no)->cgi->response
 response->e
 ```
-
+-->
+![简要流程](http://static.zgjian.cc/post/58db41ddbb29d.png)
 
 # 更多详情
 [uHTTPd [OpenWrt Wiki]](https://wiki.openwrt.org/zh-cn/doc/howto/http.uhttpd)
