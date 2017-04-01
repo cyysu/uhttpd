@@ -32,6 +32,8 @@ static bool uh_cgi_header_parse(struct http_response *res, char *buf, int len,
   int hdrcount = 0;
   int pos = 0;
 
+  D("SRV: try parse cgi header (%s)\n", buf);
+
   /* 查找响应格式的换行位置 */
   if (((bufptr = strfind(buf, len, "\r\n\r\n", 4)) != NULL) ||
       ((bufptr = strfind(buf, len, "\n\n", 2)) != NULL)) {
@@ -168,7 +170,13 @@ static bool uh_cgi_socket_cb(struct client *cl) {
     else
       state->content_length = 0;
 
-    /* 将POST数据传给CGI脚本 */
+    printf("POST DATA:%s\n", buf);
+    printf("POST LEN:%d\n", len);
+
+    /**
+     * 将POST数据传给CGI脚本
+     * script_timeout等待时间
+     */
     len = uh_raw_send(cl->wpipe.fd, buf, len, cl->server->conf->script_timeout);
 
     /* explicit EOF notification for the child */
@@ -176,7 +184,7 @@ static bool uh_cgi_socket_cb(struct client *cl) {
       uh_ufd_remove(&cl->wpipe);
   }
 
-  /* 获取子线程执行CGI脚本后的输出 */
+  /* 获取子进程执行CGI脚本后的输出 */
   while ((len = uh_raw_recv(
               cl->rpipe.fd, buf,
               state->header_sent ? sizeof(buf) : state->httpbuf.len, -1)) > 0) {
@@ -348,7 +356,11 @@ bool uh_cgi_request(struct client *cl, struct path_info *pi,
     return false;
   }
 
-  /* fork off child process */
+  /**
+   * 函数原型：pid_t fork(void);
+   * 返回值： 若成功调用一次则返回两个值，子进程返回0，父进程返回子进程ID；
+   * 否则，出错返回-1
+   */
   switch ((child = fork())) {
   /* oops */
   case -1:
@@ -357,7 +369,7 @@ bool uh_cgi_request(struct client *cl, struct path_info *pi,
 
     return false;
 
-  /* 执行子线程 */
+  /* 执行子进程 */
   case 0:
 #ifdef DEBUG
     sleep(atoi(getenv("UHTTPD_SLEEP_ON_FORK") ?: "0"));
@@ -372,10 +384,7 @@ bool uh_cgi_request(struct client *cl, struct path_info *pi,
 
     /* 标准输出绑定到管道写端*/
     dup2(rfd[1], 1);
-    /**
-     * 标准输入绑定到管道读端
-     * 向wfd[1]写入数据即写入到标准输入作为POST数据？
-     */
+    /* 标准输入绑定到管道读端 */
     dup2(wfd[0], 0);
 
     /**
@@ -505,10 +514,14 @@ bool uh_cgi_request(struct client *cl, struct path_info *pi,
         perror("chdir()");
 
       /**
-       * 使用exec会在当前的进程空间创建一个子线程，然后终止当前线程的执行，
+       * 使用exec会在当前的进程空间创建一个子进程，然后终止当前线程的执行，
        * 到了新建的线程执行完之后，其实两个线程都终止了，也就是这个当前shell进程也就终止了
        * 因为exec运行新的程序后会覆盖从父进程继承来的存储映像，那么信号捕捉函数在新程序中已无意义，
        * 原进程确实将环境变量信息传递给了新进程
+       *
+       * php-cgi在POST请求中，收到CONTENT_TYPE等于application/x-www-form-urlencoded报头后，
+       * 会根据CONTENT_LENGTH报头的长度获取POST的数据。
+       * 注意：CGI会通过阻塞的方式直到完全获取CONTENT_LENGTH长度的数据
        */
       if (ip != NULL)
         execl(ip->path, ip->path, pi->phys, NULL);
@@ -538,11 +551,11 @@ bool uh_cgi_request(struct client *cl, struct path_info *pi,
   default:
     memset(state, 0, sizeof(*state));
 
-    /* rfd[1]绑定到子线程的标准输出 */
+    /* rfd[1]绑定到子进程的标准输出 */
     cl->rpipe.fd = rfd[0];
-    /* wfd[0]绑定到子线程的标准输入 */
+    /* wfd[0]绑定到子进程的标准输入 */
     cl->wpipe.fd = wfd[1];
-    /* 主线程ID */
+    /* child子进程ID */
     cl->proc.pid = child;
 
     /* make pipe non-blocking */

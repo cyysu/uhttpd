@@ -608,8 +608,7 @@ static void uh_listener_cb(struct uloop_fd *u, unsigned int events) {
 
     /* 将新连接添加到全局client链表中 */
     if ((cl = uh_client_add(new_fd, serv, &sa)) != NULL) {
-      /* add client socket to global fdset */
-      /* 将socket可读事件添加到监听的IO模型中 */
+      /* 将socket绑定到IO模型的可读监听中 */
       uh_ufd_add(&cl->fd, uh_socket_cb, ULOOP_READ);
       fd_cloexec(cl->fd.fd);
 
@@ -663,26 +662,56 @@ static void uh_child_cb(struct uloop_process *p, int rv) {
   uh_client_cb(cl, ULOOP_READ | ULOOP_WRITE);
 }
 
+/**
+ * 强制终止进程
+ */
 static void uh_kill9_cb(struct uloop_timeout *t) {
   struct client *cl = container_of(t, struct client, timeout);
 
   if (!kill(cl->proc.pid, 0)) {
     D("SRV: Client(%d) child(%d) kill(SIGKILL)...\n", cl->fd.fd, cl->proc.pid);
 
+    /**
+     * SIGKILL信号，进程是不能忽略的。 这是一个
+     * '“我不管您在做什么,立刻停止”'的信号。 假如您发送SIGKILL信号给进程，
+     * FreeBSD就将进程停止在那里。
+     */
     kill(cl->proc.pid, SIGKILL);
   }
 }
 
+/**
+ * 进程超时回调
+ */
 static void uh_timeout_cb(struct uloop_timeout *t) {
   struct client *cl = container_of(t, struct client, timeout);
 
   D("SRV: Client(%d) child(%d) timed out\n", cl->fd.fd, cl->proc.pid);
 
+  /**
+   * 定义函数：int kill(pid_t pid, int sig);
+   * 函数说明：kill()可以用来送参数sig 指定的信号给参数pid 指定的进程。参数pid
+   * 有几种情况：
+   * 1、pid>0 将信号传给进程识别码为pid 的进程.
+   * 2、pid=0 将信号传给和目前进程相同进程组的所有进程
+   * 3、pid=-1 将信号广播传送给系统内所有的进程
+   * 4、pid<0 将信号传给进程组识别码为pid 绝对值的所有进程参数 sig
+   * 代表的信号编号可参考附录D
+   * 返回值：执行成功则返回0, 如果有错误则返回-1.
+   */
   if (!kill(cl->proc.pid, 0)) {
     D("SRV: Client(%d) child(%d) kill(SIGTERM)...\n", cl->fd.fd, cl->proc.pid);
 
+    /**
+     * SIGTERM (软中断) 使用不带参数的kill命令时终止进程
+     * SIGTERM比较友好，进程能捕捉这个信号，
+     * 根据您的需要来关闭程序。在关闭程序之前，您可以结束打开的记录文件和完成正在做的任务。
+     * 在某些情况下， 假如进程正在进行作业而且不能中断，那么进程可以忽略这个
+     * SIGTERM信号。
+     */
     kill(cl->proc.pid, SIGTERM);
 
+    /* SIGTERM处理超时则直接调用SIGKILL强制终止进程 */
     cl->timeout.cb = uh_kill9_cb;
     uloop_timeout_set(&cl->timeout, 1000);
   }
@@ -782,10 +811,11 @@ static void uh_client_cb(struct client *cl, unsigned int events) {
     if (cl->proc.pid) {
       D("SRV: Client(%d) child(%d) spawned\n", cl->fd.fd, cl->proc.pid);
 
+      /* 记录处理进程(child) */
       cl->proc.cb = uh_child_cb;
       uloop_process_add(&cl->proc);
 
-      /* 设置脚本执行时间 */
+      /* 设置脚本超时处理 ,epoll_wait等待时间*/
       cl->timeout.cb = uh_timeout_cb;
       uloop_timeout_set(&cl->timeout, conf->script_timeout * 1000);
     }
@@ -1043,7 +1073,7 @@ sigaction *oldact);
   memset(&conf, 0, sizeof(conf));
 
   /*
-    libubox主要提供一下两种功能：
+    libubox主要提供以下两种功能：
       1、提供一套基于事件驱动的机制。
       2、提供多种开发支持接口。（如：链表、kv链表、平衡查找二叉树、md5、json）
 
@@ -1246,7 +1276,10 @@ sigaction *oldact);
 #if defined(HAVE_CGI) || defined(HAVE_LUA)
     /* script timeout */
     case 't':
-      /* 脚本超时时间 */
+      /**
+       * 1、脚本超时时间，epoll_wait等待时间
+       * 2、post到script的send的等待时间
+       */
       conf.script_timeout = atoi(optarg);
       break;
 #endif

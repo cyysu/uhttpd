@@ -81,7 +81,7 @@ static void waker_consume(struct uloop_fd *fd, unsigned int events) {
   char buf[4];
 
   while (read(fd->fd, buf, 4) > 0) {
-    D("waker_consume: read %s\n", buf);
+    fprintf(stderr, "waker_consume: read %s\n", buf);
   }
 }
 
@@ -188,7 +188,7 @@ static void uloop_run_events(int timeout) {
 
   if (!cur_nfds) {
     cur_fd = 0;
-    //获取监听到的文件描述符
+    //在最新设置的超时时间内获取监听到的文件描述符
     cur_nfds = uloop_fetch_events(timeout);
     if (cur_nfds < 0)
       cur_nfds = 0;
@@ -230,6 +230,7 @@ static void uloop_run_events(int timeout) {
 
 /**
  * 注册描述符到IO模型中
+ * 未有EPOLLET配置，使用的是LT模式
  */
 int uloop_fd_add(struct uloop_fd *sock, unsigned int flags) {
   unsigned int fl;
@@ -283,6 +284,9 @@ static int tv_diff(struct timeval *t1, struct timeval *t2) {
   return (t1->tv_sec - t2->tv_sec) * 1000 + (t1->tv_usec - t2->tv_usec) / 1000;
 }
 
+/**
+ * 添加超时设置
+ */
 int uloop_timeout_add(struct uloop_timeout *timeout) {
   struct uloop_timeout *tmp;
   struct list_head *h = &timeouts;
@@ -290,6 +294,7 @@ int uloop_timeout_add(struct uloop_timeout *timeout) {
   if (timeout->pending)
     return -1;
 
+  //按照超时时间小到大排序
   list_for_each_entry(tmp, &timeouts, list) {
     if (tv_diff(&tmp->time, &timeout->time) > 0) {
       h = &tmp->list;
@@ -359,6 +364,9 @@ int uloop_timeout_remaining(struct uloop_timeout *timeout) {
   return tv_diff(&timeout->time, &now);
 }
 
+/**
+ * 记录处理进程
+ */
 int uloop_process_add(struct uloop_process *p) {
   struct uloop_process *tmp;
   struct list_head *h = &processes;
@@ -366,6 +374,7 @@ int uloop_process_add(struct uloop_process *p) {
   if (p->pending)
     return -1;
 
+  //按照pid小到大排序
   list_for_each_entry(tmp, &processes, list) {
     if (tmp->pid > p->pid) {
       h = &tmp->list;
@@ -389,6 +398,9 @@ int uloop_process_delete(struct uloop_process *p) {
   return 0;
 }
 
+/**
+ * 处理结束进程
+ */
 static void uloop_handle_processes(void) {
   struct uloop_process *p, *tmp;
   pid_t pid;
@@ -404,6 +416,7 @@ static void uloop_handle_processes(void) {
      * 子进程的结束状态值会由参数status 返回, 而子进程的进程识别码也会一快返回.
      * 参数pid=-1 等待任何子进程, 相当于wait().
      * 参数WNOHANG：如果没有任何已经结束的子进程则马上返回, 不予以等待.
+     * waitpid返回终止子进程的进程ID。
      */
     pid = waitpid(-1, &ret, WNOHANG);
     if (pid < 0 && errno == EINTR)
@@ -440,7 +453,7 @@ static void uloop_signal_wake(void) {
       if (errno == EINTR)
         continue;
     }
-    D("uloop_signal_wake: running\n");
+    fprintf(stderr, "uloop_signal_wake: running\n");
     break;
   } while (1);
 }
@@ -450,7 +463,7 @@ static void uloop_signal_wake(void) {
  * 用户中断回调
  */
 static void uloop_handle_sigint(int signo) {
-  D("uloop_handle_sigint: signo：%d\n", signo);
+  fprintf(stderr, "uloop_handle_sigint: signo：%d\n", signo);
   uloop_status = signo;
   uloop_cancelled = true;
   uloop_signal_wake();
@@ -461,7 +474,7 @@ static void uloop_handle_sigint(int signo) {
  * 子进程结束后回调
  */
 static void uloop_sigchld(int signo) {
-  D("uloop_sigchld: running\n");
+  fprintf(stderr, "uloop_sigchld: running\n");
   do_sigchld = true;
   uloop_signal_wake();
 }
@@ -549,6 +562,9 @@ static void uloop_setup_signals(bool add) {
   uloop_ignore_signal(SIGPIPE, add);
 }
 
+/**
+ * 获取下一个超时设置
+ */
 static int uloop_get_next_timeout(struct timeval *tv) {
   struct uloop_timeout *timeout;
   int diff;
@@ -614,11 +630,19 @@ int uloop_run(void) {
   uloop_status = 0;
   uloop_cancelled = false;
 
-  /* 进入事件循环 */
+  /* 进入事件循环，单线程，默认LT模式 */
   while (!uloop_cancelled) {
+
+    fprintf(stderr, "SRV: Begin uloop\n");
+
     //获取当前时间
     uloop_gettime(&tv);
-    //把超时的timeout清理掉
+
+    /**
+     * 检查超时进程，超时则执行回调。
+     * 如执行CGI脚本，则设置超时时间到全局变量timeouts中，
+     * epoll_wait则会读取timeouts等待脚本执行。
+     */
     uloop_process_timeouts(&tv);
 
     /**
@@ -634,7 +658,13 @@ int uloop_run(void) {
     //获取当时间时间
     uloop_gettime(&tv);
 
-    /* 处理相应的触发事件fd */
+    /**
+     * 处理相应的触发事件fd
+     *
+     * 如何区分每个超时设置是对应的处理？
+     * 单线程，无法保证准确地处理超时进程，只有重新进入循环，进入uloop_process_timeouts后，
+     * 才能确认是否已超时
+     */
     uloop_run_events(uloop_get_next_timeout(&tv));
   }
 

@@ -120,11 +120,9 @@ static int __uh_raw_send(struct client *cl, const char *buf, int len, int sec,
         D("IO: FD(%d) interrupted\n", cl->fd.fd);
         continue;
       }
-      /**
-       * 非阻塞模式，循环写完所有数据
-       */
+      /* 非阻塞模式，循环写完所有数据 */
       else if ((sec > 0) && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-        //数据读/写完应该跳出去，为什么还要用uh_socket_wait的select？
+        /* 暂时无法写入数据（比如：缓存满了），等待一段时间再写 */
         if (!uh_socket_wait(fd, sec, true))
           return -1;
       } else {
@@ -192,11 +190,9 @@ static int __uh_raw_recv(struct client *cl, char *buf, int len, int sec,
       if (errno == EINTR) {
         continue;
       }
-      /**
-        * 非阻塞模式，循环读完所有数据
-        */
+      /* 非阻塞模式，循环读完所有数据 */
       else if ((sec > 0) && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-        //数据读/写完应该跳出去，为什么还要用uh_socket_wait的select？
+        /* 暂时无数据可读，等待一段时间再读 */
         if (!uh_socket_wait(fd, sec, false))
           return -1;
       } else {
@@ -960,7 +956,7 @@ void uh_client_shutdown(struct client *cl) {
 }
 
 /**
- * 清理请求
+ * 清理完成的请求
  */
 void uh_client_remove(struct client *cl) {
   struct client *cur = NULL;

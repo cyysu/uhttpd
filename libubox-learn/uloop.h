@@ -69,19 +69,19 @@ struct uloop_fd {
   uint8_t flags;
 };
 
-/* 定时器结构体 */
+/* 超时处理结构体 */
 struct uloop_timeout {
   struct list_head list;
-  bool pending;
+  bool pending; /* 是否正在执行 */
 
-  uloop_timeout_handler cb; /** 定时事件处理函数 */
-  struct timeval time;      /** 时间结构体 */
+  uloop_timeout_handler cb; /** 超时回调函数 */
+  struct timeval time;      /** 结束时间 */
 };
 
 /* 进程结构体 */
 struct uloop_process {
   struct list_head list;
-  bool pending;
+  bool pending; /* 是否正在执行 */
 
   uloop_process_handler cb; /** 进程事件处理函数 */
   pid_t pid;                /** 进程号*/

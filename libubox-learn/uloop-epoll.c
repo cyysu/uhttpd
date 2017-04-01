@@ -98,6 +98,8 @@ static int __uloop_fd_delete(struct uloop_fd *sock) {
 static int uloop_fetch_events(int timeout) {
   int n, nfds;
 
+  fprintf(stderr, "SRV: epoll wait %d\n", timeout);
+
   nfds = epoll_wait(poll_fd, events, ARRAY_SIZE(events), timeout);
   for (n = 0; n < nfds; ++n) {
     struct uloop_fd_event *cur = &cur_fds[n];
