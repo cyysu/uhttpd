@@ -816,7 +816,7 @@ static void uh_client_cb(struct client *cl, unsigned int events) {
 
       /**
        * 记录处理进程(child)
-       * 子进程结束为什么要调用uh_child_cb？？？
+       * 从CGI程序读完了数据之后，它还是不放心，又解析了一下响应头，确认正确之后，才发给了客户端。
        */
       cl->proc.cb = uh_child_cb;
       uloop_process_add(&cl->proc);
