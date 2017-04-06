@@ -654,6 +654,9 @@ static void uh_socket_cb(struct uloop_fd *u, unsigned int events) {
 }
 
 #if defined(HAVE_CGI) || defined(HAVE_LUA) || defined(HAVE_UBUS)
+/**
+ * 子线程结束回调函数
+ */
 static void uh_child_cb(struct uloop_process *p, int rv) {
   struct client *cl = container_of(p, struct client, proc);
 
@@ -811,7 +814,10 @@ static void uh_client_cb(struct client *cl, unsigned int events) {
     if (cl->proc.pid) {
       D("SRV: Client(%d) child(%d) spawned\n", cl->fd.fd, cl->proc.pid);
 
-      /* 记录处理进程(child) */
+      /**
+       * 记录处理进程(child)
+       * 子进程结束为什么要调用uh_child_cb？？？
+       */
       cl->proc.cb = uh_child_cb;
       uloop_process_add(&cl->proc);
 
@@ -1109,6 +1115,7 @@ sigaction *oldact);
 
 #ifdef HAVE_TLS
       if (opt == 's') {
+        // 初始化TLS/SSL链接配置
         if (uh_inittls(&conf)) {
           fprintf(stderr, "Notice: TLS support is disabled, "
                           "ignoring '-s %s'\n",

@@ -1,6 +1,12 @@
 /*
  * uhttpd - Tiny single-threaded httpd - CGI handler
  *
+ * uhttpd采用了管道和CGI程序进行通信，有两个管道，实现双向通信。
+ * 一个管道负责从父进程写数据到CGI程序，主要是客户端的POST数据。
+ * 另一个就是读取CGI程序的处理结果。同时，按照CGI的标准，
+ * HTTP请求头都是通过环境变量的方式传给CGI程序的，CGI程序是fork和exec的，
+ * 所以会继承环境变量，达到传递数据的目的。
+ *
  *   Copyright (C) 2010-2012 Jo-Philipp Wich <xm@subsignal.org>
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");

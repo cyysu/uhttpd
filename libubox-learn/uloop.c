@@ -1,6 +1,11 @@
 /*
- * 事件循环实现
  * uloop - event loop implementation
+ *
+ * uloop主要工能有下例3个
+ * 文件描述符触发事件的监控 (即uloop_run_events)
+ * - 循环调用epoll_wait 监相应的触发事件文件描述符fd
+ * - timeout定时器处理(即uloop_process_timeouts)
+ * - 当前进程的子进程的维护(即uloop_handle_processes)
  *
  * Copyright (C) 2010-2016 Felix Fietkau <nbd@openwrt.org>
  *
@@ -85,6 +90,7 @@ static void waker_consume(struct uloop_fd *fd, unsigned int events) {
   }
 }
 
+// waker_pipe究竟有什么用？？？
 static int waker_pipe = -1;
 static struct uloop_fd waker_fd = {
     .fd = -1, .cb = waker_consume,
@@ -285,7 +291,8 @@ static int tv_diff(struct timeval *t1, struct timeval *t2) {
 }
 
 /**
- * 添加超时设置
+ * 循环获取当前时间，把超时的timeout处理掉，有一条timeout链表在维护（即静态struct
+ * list_head超时）
  */
 int uloop_timeout_add(struct uloop_timeout *timeout) {
   struct uloop_timeout *tmp;
@@ -343,6 +350,9 @@ int uloop_timeout_set(struct uloop_timeout *timeout, int msecs) {
   return uloop_timeout_add(timeout);
 }
 
+/**
+ * 销毁指定定时器
+ */
 int uloop_timeout_cancel(struct uloop_timeout *timeout) {
   if (!timeout->pending)
     return -1;
@@ -353,6 +363,9 @@ int uloop_timeout_cancel(struct uloop_timeout *timeout) {
   return 0;
 }
 
+/**
+ * 获取定时器还剩多长时间超时
+ */
 int uloop_timeout_remaining(struct uloop_timeout *timeout) {
   struct timeval now;
 
@@ -365,7 +378,8 @@ int uloop_timeout_remaining(struct uloop_timeout *timeout) {
 }
 
 /**
- * 记录处理进程
+ * 循环检测是否收到一个sigchld信号，如果收到，删除对应的子进程，
+ * 有一条过程子进程链表在维护（即静态struct list_head进程）
  */
 int uloop_process_add(struct uloop_process *p) {
   struct uloop_process *tmp;
@@ -388,6 +402,9 @@ int uloop_process_add(struct uloop_process *p) {
   return 0;
 }
 
+/**
+ * 从事件处理循环中销毁指定进程
+ */
 int uloop_process_delete(struct uloop_process *p) {
   if (!p->pending)
     return -1;
@@ -470,8 +487,8 @@ static void uloop_handle_sigint(int signo) {
 }
 
 /**
- * SIGCHLD (子进程结束) 当子进程终止时通知父进程
- * 子进程结束后回调
+ * 子进程结束后回调（SIGCHLD (子进程结束) 当子进程终止时通知父进程）
+ * 当主进程接到信号后，会先进入信号的回调函数进行处理
  */
 static void uloop_sigchld(int signo) {
   fprintf(stderr, "uloop_sigchld: running\n");
