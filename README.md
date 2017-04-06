@@ -26,7 +26,7 @@ $ cmake -DBUILD_LUA=off
 $ make
 $ make install
 ```
-+ 最后编译安装uhttpd。（注意：CMakeLIsts.txt中的编译新增了-Werror选项，所有警告会当成错误进行处理）
+最后编译安装uhttpd。（注意：CMakeLIsts.txt中的编译新增了-Werror选项，所有警告会当成错误进行处理）
 ```
 $ cd uhttpd/build
 $ cmake ..
